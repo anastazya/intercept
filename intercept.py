@@ -1194,7 +1194,7 @@ HTML_TEMPLATE = '''
 
         .channel-label {
             font-size: 8px;
-            color: var(--text-dim);
+            color: #fff;
             margin-top: 3px;
         }
 
@@ -3130,19 +3130,45 @@ HTML_TEMPLATE = '''
                 return;
             }
 
+            // Show loading state
+            const btn = document.getElementById('monitorStartBtn');
+            const originalText = btn.textContent;
+            btn.textContent = 'Enabling...';
+            btn.disabled = true;
+
             fetch('/wifi/monitor', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({interface: iface, action: 'start'})
             }).then(r => r.json())
               .then(data => {
+                  btn.textContent = originalText;
+                  btn.disabled = false;
+
                   if (data.status === 'success') {
                       monitorInterface = data.monitor_interface;
                       updateMonitorStatus(true);
-                      showInfo('Monitor mode enabled on ' + monitorInterface);
+                      showInfo('Monitor mode enabled on ' + monitorInterface + ' - Ready to scan!');
+
+                      // Refresh interface list and auto-select the monitor interface
+                      fetch('/wifi/interfaces')
+                          .then(r => r.json())
+                          .then(ifaceData => {
+                              const select = document.getElementById('wifiInterfaceSelect');
+                              if (ifaceData.interfaces.length > 0) {
+                                  select.innerHTML = ifaceData.interfaces.map(i =>
+                                      `<option value="${i.name}" ${i.name === monitorInterface ? 'selected' : ''}>${i.name} (${i.type})${i.monitor_capable ? ' [Monitor OK]' : ''}</option>`
+                                  ).join('');
+                              }
+                          });
                   } else {
                       alert('Error: ' + data.message);
                   }
+              })
+              .catch(err => {
+                  btn.textContent = originalText;
+                  btn.disabled = false;
+                  alert('Error: ' + err.message);
               });
         }
 
