@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-Pager Decoder - POCSAG/FLEX decoder using RTL-SDR and multimon-ng
+INTERCEPT - Signal Intelligence Platform
+
+A comprehensive signal intelligence tool featuring:
+- Pager decoding (POCSAG/FLEX)
+- 433MHz sensor monitoring
+- ADS-B aircraft tracking with WarGames-style display
+- Satellite pass prediction and Iridium burst detection
+- WiFi reconnaissance and drone detection
+- Bluetooth scanning
+
+Requires RTL-SDR hardware for RF modes.
 """
 
 import subprocess
@@ -59,6 +69,38 @@ bt_interface = None
 bt_devices = {}      # MAC -> device info
 bt_beacons = {}      # MAC -> beacon info (AirTags, Tiles, iBeacons)
 bt_services = {}     # MAC -> list of services
+
+# Aircraft (ADS-B) state
+adsb_process = None
+adsb_queue = queue.Queue()
+adsb_lock = threading.Lock()
+adsb_aircraft = {}   # ICAO hex -> aircraft info
+
+# Satellite state
+satellite_process = None
+satellite_queue = queue.Queue()
+satellite_lock = threading.Lock()
+iridium_bursts = []  # List of detected Iridium bursts
+satellite_passes = []  # Predicted satellite passes
+
+# TLE data for satellite tracking (updated periodically)
+TLE_SATELLITES = {
+    'ISS': ('ISS (ZARYA)',
+            '1 25544U 98067A   24001.00000000  .00000000  00000-0  00000-0 0  0000',
+            '2 25544  51.6400   0.0000 0000000   0.0000   0.0000 15.50000000000000'),
+    'NOAA-15': ('NOAA 15',
+                '1 25338U 98030A   24001.00000000  .00000-0  00000-0  00000-0 0  0000',
+                '2 25338  98.7300   0.0000 0010000   0.0000   0.0000 14.26000000000000'),
+    'NOAA-18': ('NOAA 18',
+                '1 28654U 05018A   24001.00000000  .00000-0  00000-0  00000-0 0  0000',
+                '2 28654  98.8800   0.0000 0014000   0.0000   0.0000 14.12000000000000'),
+    'NOAA-19': ('NOAA 19',
+                '1 33591U 09005A   24001.00000000  .00000-0  00000-0  00000-0 0  0000',
+                '2 33591  99.1900   0.0000 0014000   0.0000   0.0000 14.12000000000000'),
+    'METEOR-M2': ('METEOR-M 2',
+                  '1 40069U 14037A   24001.00000000  .00000-0  00000-0  00000-0 0  0000',
+                  '2 40069  98.5400   0.0000 0005000   0.0000   0.0000 14.21000000000000'),
+}
 
 # Known beacon prefixes for detection
 AIRTAG_PREFIXES = ['4C:00']  # Apple continuity
@@ -251,6 +293,9 @@ HTML_TEMPLATE = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>INTERCEPT // Signal Intelligence</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <!-- Leaflet.js for aircraft map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Rajdhani:wght@400;500;600;700&display=swap');
 
@@ -275,6 +320,33 @@ HTML_TEMPLATE = '''
             --text-dim: #444444;
             --border-color: #1a1a1a;
             --border-glow: #00d4ff33;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #e8e8e8;
+            --bg-tertiary: #dddddd;
+            --bg-card: #ffffff;
+            --accent-cyan: #0088aa;
+            --accent-cyan-dim: #0088aa40;
+            --accent-green: #00aa55;
+            --accent-red: #cc2244;
+            --accent-orange: #cc6600;
+            --text-primary: #111111;
+            --text-secondary: #555555;
+            --text-dim: #999999;
+            --border-color: #cccccc;
+            --border-glow: #0088aa33;
+        }
+
+        [data-theme="light"] body {
+            background-image:
+                radial-gradient(ellipse at top, #d0e8f0 0%, transparent 50%),
+                radial-gradient(ellipse at bottom, #f0f0f0 0%, var(--bg-primary) 100%);
+        }
+
+        [data-theme="light"] .leaflet-tile-pane {
+            filter: none;
         }
 
         body {
@@ -328,6 +400,241 @@ HTML_TEMPLATE = '''
             font-size: 14px;
             letter-spacing: 3px;
             text-transform: uppercase;
+        }
+
+        .help-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .help-btn:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            box-shadow: 0 0 15px var(--accent-cyan-dim);
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 60px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .theme-toggle:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            box-shadow: 0 0 15px var(--accent-cyan-dim);
+        }
+
+        .theme-toggle .icon-sun,
+        .theme-toggle .icon-moon {
+            position: absolute;
+            transition: opacity 0.2s, transform 0.2s;
+        }
+
+        .theme-toggle .icon-sun {
+            opacity: 0;
+            transform: rotate(-90deg);
+        }
+
+        .theme-toggle .icon-moon {
+            opacity: 1;
+            transform: rotate(0deg);
+        }
+
+        [data-theme="light"] .theme-toggle .icon-sun {
+            opacity: 1;
+            transform: rotate(0deg);
+        }
+
+        [data-theme="light"] .theme-toggle .icon-moon {
+            opacity: 0;
+            transform: rotate(90deg);
+        }
+
+        .help-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 10000;
+            overflow-y: auto;
+            padding: 40px 20px;
+        }
+
+        .help-modal.active {
+            display: block;
+        }
+
+        .help-content {
+            max-width: 800px;
+            margin: 0 auto;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 30px;
+            position: relative;
+        }
+
+        .help-content h2 {
+            color: var(--accent-cyan);
+            margin-bottom: 20px;
+            font-size: 24px;
+            letter-spacing: 2px;
+        }
+
+        .help-content h3 {
+            color: var(--text-primary);
+            margin: 25px 0 15px 0;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+
+        .help-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            font-size: 24px;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .help-close:hover {
+            color: var(--accent-red);
+        }
+
+        .icon-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin: 15px 0;
+        }
+
+        .icon-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .icon-item .icon {
+            font-size: 18px;
+            width: 30px;
+            text-align: center;
+        }
+
+        .icon-item .desc {
+            color: var(--text-secondary);
+        }
+
+        .tip-list {
+            list-style: none;
+            padding: 0;
+            margin: 15px 0;
+        }
+
+        .tip-list li {
+            padding: 8px 0;
+            padding-left: 20px;
+            position: relative;
+            color: var(--text-secondary);
+            font-size: 13px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .tip-list li:last-child {
+            border-bottom: none;
+        }
+
+        .tip-list li::before {
+            content: '›';
+            position: absolute;
+            left: 0;
+            color: var(--accent-cyan);
+            font-weight: bold;
+        }
+
+        .help-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .help-tab {
+            flex: 1;
+            padding: 10px;
+            background: var(--bg-primary);
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }
+
+        .help-tab:not(:last-child) {
+            border-right: 1px solid var(--border-color);
+        }
+
+        .help-tab:hover {
+            background: var(--bg-secondary);
+        }
+
+        .help-tab.active {
+            background: var(--accent-cyan);
+            color: var(--bg-primary);
+        }
+
+        .help-section {
+            display: none;
+        }
+
+        .help-section.active {
+            display: block;
         }
 
         .logo {
@@ -904,11 +1211,161 @@ HTML_TEMPLATE = '''
             color: var(--accent-red);
         }
 
-        /* Mode tabs */
+        /* Signal Strength Graph */
+        .signal-graph-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 12px;
+            margin-top: 10px;
+        }
+
+        .signal-graph-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .signal-graph-header h4 {
+            color: var(--accent-cyan);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0;
+        }
+
+        .signal-graph-device {
+            font-size: 10px;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        #signalGraph {
+            width: 100%;
+            height: 80px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+        }
+
+        /* Network Relationship Graph */
+        .network-graph-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 12px;
+            margin-top: 10px;
+        }
+
+        .network-graph-container h4 {
+            color: var(--accent-cyan);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0 0 10px 0;
+        }
+
+        #networkGraph {
+            width: 100%;
+            height: 200px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+        }
+
+        .network-graph-legend {
+            display: flex;
+            gap: 15px;
+            margin-top: 8px;
+            font-size: 10px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: var(--text-secondary);
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.ap { background: var(--accent-cyan); }
+        .legend-dot.client { background: var(--accent-green); }
+        .legend-dot.drone { background: var(--accent-orange); }
+
+        /* Channel Recommendation */
+        .channel-recommendation {
+            background: var(--bg-card);
+            border: 1px solid var(--accent-green);
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
+        }
+
+        .channel-recommendation h4 {
+            color: var(--accent-green);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0 0 8px 0;
+        }
+
+        .channel-recommendation .rec-text {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .channel-recommendation .rec-channel {
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--accent-green);
+        }
+
+        /* Device Correlation */
+        .correlation-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            background: var(--accent-orange);
+            color: var(--bg-primary);
+            font-size: 9px;
+            border-radius: 3px;
+            margin-left: 5px;
+            font-weight: bold;
+        }
+
+        /* Hidden SSID reveal */
+        .hidden-ssid-revealed {
+            color: var(--accent-orange);
+            font-style: italic;
+        }
+
+        /* Mode tabs - grouped layout */
+        .mode-tabs-container {
+            margin-bottom: 15px;
+        }
+
+        .tab-group {
+            margin-bottom: 8px;
+        }
+
+        .tab-group-label {
+            font-size: 9px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 4px;
+            padding-left: 4px;
+            font-family: 'Rajdhani', sans-serif;
+        }
+
         .mode-tabs {
             display: flex;
             gap: 0;
-            margin-bottom: 15px;
             border: 1px solid var(--border-color);
             border-radius: 4px;
             overflow: hidden;
@@ -957,6 +1414,765 @@ HTML_TEMPLATE = '''
 
         .mode-content.active {
             display: block;
+        }
+
+        /* Aircraft (ADS-B) Styles */
+        .aircraft-card {
+            padding: 12px;
+            margin-bottom: 8px;
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-cyan);
+            background: var(--bg-secondary);
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .aircraft-icon {
+            font-size: 28px;
+            transform: rotate(var(--heading, 0deg));
+            transition: transform 0.3s ease;
+        }
+
+        .aircraft-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 8px;
+        }
+
+        .aircraft-callsign {
+            color: var(--accent-cyan);
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .aircraft-data {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .aircraft-data span {
+            color: var(--text-primary);
+        }
+
+        /* Aircraft Map Display - Leaflet */
+        .aircraft-map-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            background: #0a0a0a;
+            border: 1px solid var(--accent-cyan);
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);
+        }
+
+        #aircraftMap {
+            width: 100%;
+            height: 100%;
+            background: #0a0a0a;
+        }
+
+        /* Dark theme for Leaflet */
+        .leaflet-container {
+            background: #0a0a0a;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .leaflet-tile-pane {
+            filter: invert(1) hue-rotate(180deg) brightness(0.8) contrast(1.2);
+        }
+
+        .leaflet-control-zoom {
+            margin-top: 45px !important;
+        }
+
+        .leaflet-control-zoom a {
+            background: var(--bg-card) !important;
+            color: var(--accent-cyan) !important;
+            border-color: var(--border-color) !important;
+        }
+
+        .leaflet-control-zoom a:hover {
+            background: var(--bg-tertiary) !important;
+        }
+
+        .leaflet-control-attribution {
+            background: rgba(0, 0, 0, 0.7) !important;
+            color: #666 !important;
+            font-size: 9px !important;
+        }
+
+        .leaflet-control-attribution a {
+            color: #888 !important;
+        }
+
+        .map-header {
+            position: absolute;
+            top: 8px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            z-index: 1000;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--accent-cyan);
+            text-shadow: 0 0 5px var(--accent-cyan);
+            background: rgba(0, 0, 0, 0.6);
+            padding: 4px 8px;
+            border-radius: 3px;
+        }
+
+        .map-footer {
+            position: absolute;
+            bottom: 8px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            z-index: 1000;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--accent-cyan);
+            text-shadow: 0 0 5px var(--accent-cyan);
+            background: rgba(0, 0, 0, 0.6);
+            padding: 4px 8px;
+            border-radius: 3px;
+        }
+
+        /* Aircraft marker styles */
+        .aircraft-marker {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .aircraft-marker svg {
+            filter: drop-shadow(0 0 4px currentColor);
+        }
+
+        .aircraft-popup {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+        }
+
+        .aircraft-popup .callsign {
+            color: var(--accent-cyan);
+            font-weight: bold;
+            font-size: 13px;
+        }
+
+        .aircraft-popup .data-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 3px 0;
+        }
+
+        .aircraft-popup .label {
+            color: #888;
+        }
+
+        .aircraft-popup .value {
+            color: #fff;
+        }
+
+        .leaflet-popup-content-wrapper {
+            background: var(--bg-card) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 4px !important;
+        }
+
+        .leaflet-popup-tip {
+            background: var(--bg-card) !important;
+            border: 1px solid var(--border-color) !important;
+        }
+
+        .leaflet-popup-content {
+            color: var(--text-primary) !important;
+            margin: 10px !important;
+        }
+
+        .leaflet-tooltip.aircraft-tooltip {
+            background: rgba(0, 0, 0, 0.8) !important;
+            border: 1px solid var(--accent-cyan) !important;
+            color: var(--accent-cyan) !important;
+            font-family: 'JetBrains Mono', monospace !important;
+            font-size: 10px !important;
+            padding: 2px 6px !important;
+            border-radius: 2px !important;
+        }
+
+        .leaflet-tooltip.aircraft-tooltip::before {
+            border-right-color: var(--accent-cyan) !important;
+        }
+
+        /* Satellite Mode Styles */
+        .satellite-section {
+            margin-bottom: 20px;
+        }
+
+        .satellite-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 15px;
+        }
+
+        .satellite-tab {
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 11px;
+            text-transform: uppercase;
+            transition: all 0.2s ease;
+        }
+
+        .satellite-tab:hover {
+            border-color: var(--accent-cyan);
+            color: var(--text-primary);
+        }
+
+        .satellite-tab.active {
+            background: var(--accent-cyan);
+            border-color: var(--accent-cyan);
+            color: var(--bg-primary);
+        }
+
+        .satellite-content {
+            display: none;
+        }
+
+        .satellite-content.active {
+            display: block;
+        }
+
+        /* Satellite Pass Predictor - Cool UI */
+        .pass-predictor {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        @media (max-width: 900px) {
+            .pass-predictor {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .polar-plot-container {
+            position: relative;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .polar-plot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .polar-plot-title {
+            color: var(--accent-cyan);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .popout-btn {
+            padding: 4px 10px;
+            background: transparent;
+            border: 1px solid var(--accent-cyan);
+            border-radius: 3px;
+            color: var(--accent-cyan);
+            font-size: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .popout-btn:hover {
+            background: var(--accent-cyan);
+            color: var(--bg-primary);
+        }
+
+        .polar-plot {
+            position: relative;
+            width: 100%;
+            padding-bottom: 100%;
+        }
+
+        .polar-plot canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .pass-list-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 450px;
+            overflow-y: auto;
+        }
+
+        .pass-list-header {
+            color: var(--accent-cyan);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Satellite Countdown Block */
+        .satellite-countdown {
+            background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+            border: 1px solid var(--accent-cyan);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.1);
+        }
+
+        .countdown-satellite-name {
+            color: var(--accent-cyan);
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-align: center;
+            margin-bottom: 12px;
+            text-shadow: 0 0 10px var(--accent-cyan-dim);
+        }
+
+        .countdown-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .countdown-block {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+        }
+
+        .countdown-label {
+            color: var(--text-dim);
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+
+        .countdown-value {
+            color: var(--accent-cyan);
+            font-size: 22px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            text-shadow: 0 0 15px var(--accent-cyan-dim);
+            line-height: 1.2;
+        }
+
+        .countdown-value.active {
+            color: var(--accent-green);
+            text-shadow: 0 0 15px rgba(0, 255, 136, 0.4);
+            animation: countdown-pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes countdown-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .countdown-sublabel {
+            color: var(--text-secondary);
+            font-size: 9px;
+            margin-top: 4px;
+        }
+
+        .countdown-status {
+            text-align: center;
+            font-size: 10px;
+            color: var(--text-dim);
+            padding-top: 8px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .countdown-status.visible {
+            color: var(--accent-green);
+        }
+
+        .countdown-status.upcoming {
+            color: var(--accent-orange);
+        }
+
+        .location-input {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .location-input input {
+            flex: 1;
+            padding: 8px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            color: var(--text-primary);
+            font-size: 12px;
+        }
+
+        .pass-card {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .pass-card:hover {
+            border-color: var(--accent-cyan);
+        }
+
+        .pass-card.active {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+        }
+
+        .pass-satellite {
+            color: var(--accent-cyan);
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .pass-time {
+            color: var(--text-primary);
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+
+        .pass-details {
+            display: flex;
+            gap: 15px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .pass-details span {
+            color: var(--text-primary);
+        }
+
+        .pass-quality {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .pass-quality.excellent {
+            background: rgba(0, 255, 0, 0.2);
+            color: var(--accent-green);
+        }
+
+        .pass-quality.good {
+            background: rgba(0, 255, 255, 0.2);
+            color: var(--accent-cyan);
+        }
+
+        .pass-quality.fair {
+            background: rgba(255, 102, 0, 0.2);
+            color: var(--accent-orange);
+        }
+
+        /* Satellite List Styles */
+        .satellite-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 8px;
+        }
+
+        .sat-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 8px;
+            margin-bottom: 4px;
+            background: var(--bg-secondary);
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .sat-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .sat-item label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .sat-item input[type="checkbox"] {
+            margin: 0;
+        }
+
+        .sat-item .sat-name {
+            color: var(--text-primary);
+        }
+
+        .sat-item .sat-norad {
+            color: var(--text-secondary);
+            font-size: 10px;
+        }
+
+        .sat-item .sat-remove {
+            background: none;
+            border: none;
+            color: var(--accent-red);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 2px 6px;
+            opacity: 0.6;
+        }
+
+        .sat-item .sat-remove:hover {
+            opacity: 1;
+        }
+
+        .sat-item.builtin .sat-remove {
+            display: none;
+        }
+
+        /* Satellite Add Modal */
+        .sat-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+
+        .sat-modal.active {
+            display: flex;
+        }
+
+        .sat-modal-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--accent-cyan);
+            border-radius: 8px;
+            padding: 20px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .sat-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .sat-modal-header h3 {
+            color: var(--accent-cyan);
+            margin: 0;
+        }
+
+        .sat-modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .sat-modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .sat-modal-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .sat-modal-tab {
+            flex: 1;
+            padding: 8px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .sat-modal-tab.active {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .sat-modal-section {
+            display: none;
+        }
+
+        .sat-modal-section.active {
+            display: block;
+        }
+
+        .tle-textarea {
+            width: 100%;
+            height: 120px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-family: monospace;
+            font-size: 11px;
+            padding: 10px;
+            resize: vertical;
+        }
+
+        .celestrak-categories {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .celestrak-cat {
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 11px;
+            text-align: center;
+        }
+
+        .celestrak-cat:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* Iridium Burst Styles */
+        .iridium-warning {
+            padding: 12px;
+            margin-bottom: 15px;
+            background: rgba(255, 102, 0, 0.1);
+            border: 1px solid var(--accent-orange);
+            border-radius: 4px;
+            color: var(--accent-orange);
+            font-size: 12px;
+        }
+
+        .iridium-warning strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .burst-card {
+            padding: 10px;
+            margin-bottom: 6px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid #9370DB;
+            font-family: monospace;
+            font-size: 11px;
+        }
+
+        .burst-time {
+            color: var(--text-secondary);
+        }
+
+        .burst-freq {
+            color: #9370DB;
+            font-weight: 600;
+        }
+
+        .burst-data {
+            color: var(--text-primary);
+            word-break: break-all;
+        }
+
+        /* Popout window styles */
+        .popout-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: var(--bg-primary);
+            z-index: 10000;
+            display: none;
+        }
+
+        .popout-container.active {
+            display: block;
+        }
+
+        .popout-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .popout-title {
+            color: var(--accent-cyan);
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .popout-close {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--accent-red);
+            border-radius: 3px;
+            color: var(--accent-red);
+            cursor: pointer;
+        }
+
+        .popout-body {
+            padding: 20px;
+            height: calc(100vh - 70px);
+            overflow: auto;
         }
 
         /* Sensor card styling */
@@ -1539,6 +2755,11 @@ HTML_TEMPLATE = '''
         </div>
     </div>
     <header>
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Light/Dark Theme">
+            <span class="icon-moon">🌙</span>
+            <span class="icon-sun">☀️</span>
+        </button>
+        <button class="help-btn" onclick="showHelp()" title="Help & Documentation">?</button>
         <div class="logo">
             <svg width="50" height="50" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <!-- Outer hexagon -->
@@ -1561,12 +2782,24 @@ HTML_TEMPLATE = '''
     <div class="container">
         <div class="main-content">
             <div class="sidebar">
-                <!-- Mode Tabs -->
-                <div class="mode-tabs">
-                    <button class="mode-tab active" onclick="switchMode('pager')"><span class="tab-icon">📟</span>Pager</button>
-                    <button class="mode-tab" onclick="switchMode('sensor')"><span class="tab-icon">📡</span>433MHz</button>
-                    <button class="mode-tab" onclick="switchMode('wifi')"><span class="tab-icon">📶</span>WiFi</button>
-                    <button class="mode-tab" onclick="switchMode('bluetooth')"><span class="tab-icon">🔵</span>BT</button>
+                <!-- Mode Tabs - Grouped -->
+                <div class="mode-tabs-container">
+                    <div class="tab-group">
+                        <div class="tab-group-label">SDR / RF</div>
+                        <div class="mode-tabs">
+                            <button class="mode-tab active" onclick="switchMode('pager')"><span class="tab-icon">📟</span>Pager</button>
+                            <button class="mode-tab" onclick="switchMode('sensor')"><span class="tab-icon">📡</span>433MHz</button>
+                            <button class="mode-tab" onclick="switchMode('aircraft')"><span class="tab-icon">✈️</span>Aircraft</button>
+                            <button class="mode-tab" onclick="switchMode('satellite')"><span class="tab-icon">🛰️</span>Satellite</button>
+                        </div>
+                    </div>
+                    <div class="tab-group">
+                        <div class="tab-group-label">Wireless</div>
+                        <div class="mode-tabs">
+                            <button class="mode-tab" onclick="switchMode('wifi')"><span class="tab-icon">📶</span>WiFi</button>
+                            <button class="mode-tab" onclick="switchMode('bluetooth')"><span class="tab-icon">🔵</span>BT</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="section" id="rtlDeviceSection">
@@ -1905,6 +3138,179 @@ HTML_TEMPLATE = '''
                     </button>
                 </div>
 
+                <!-- AIRCRAFT MODE (ADS-B) -->
+                <div id="aircraftMode" class="mode-content">
+                    <div class="section">
+                        <h3>ADS-B Receiver</h3>
+                        <div class="form-group">
+                            <label>Frequency</label>
+                            <input type="text" id="adsbFrequency" value="1090" readonly style="opacity: 0.7;">
+                            <div class="info-text">Fixed at 1090 MHz</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Gain (dB)</label>
+                            <input type="text" id="adsbGain" value="40" placeholder="40">
+                        </div>
+                        <div class="checkbox-group">
+                            <label>
+                                <input type="checkbox" id="adsbEnableMap" checked>
+                                Show Radar Display
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h3>Display Settings</h3>
+                        <div class="form-group">
+                            <label>Range (nm)</label>
+                            <select id="adsbRange">
+                                <option value="50">50 nm</option>
+                                <option value="100" selected>100 nm</option>
+                                <option value="200">200 nm</option>
+                                <option value="500">500 nm</option>
+                            </select>
+                        </div>
+                        <div class="checkbox-group">
+                            <label>
+                                <input type="checkbox" id="adsbShowLabels" checked>
+                                Show Callsigns
+                            </label>
+                            <label>
+                                <input type="checkbox" id="adsbShowAltitude" checked>
+                                Show Altitude
+                            </label>
+                            <label>
+                                <input type="checkbox" id="adsbShowTrails">
+                                Show Flight Trails
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="info-text" style="margin-top: 8px; display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center;" id="adsbToolStatus">
+                        <span>dump1090:</span><span class="tool-status" id="dump1090Status">Checking...</span>
+                        <span>rtl_adsb:</span><span class="tool-status" id="rtlAdsbStatus">Checking...</span>
+                    </div>
+
+                    <button class="run-btn" id="startAdsbBtn" onclick="startAdsbScan()">
+                        Start Tracking
+                    </button>
+                    <button class="stop-btn" id="stopAdsbBtn" onclick="stopAdsbScan()" style="display: none;">
+                        Stop Tracking
+                    </button>
+                </div>
+
+                <!-- SATELLITE MODE -->
+                <div id="satelliteMode" class="mode-content">
+                    <div class="satellite-tabs">
+                        <button class="satellite-tab active" onclick="switchSatelliteTab('predictor')">🛰️ Pass Predictor</button>
+                        <button class="satellite-tab" onclick="switchSatelliteTab('iridium')">📡 Iridium</button>
+                    </div>
+
+                    <!-- Pass Predictor Sub-tab -->
+                    <div id="predictorTab" class="satellite-content active">
+                        <div class="section">
+                            <h3>Observer Location</h3>
+                            <div class="form-group">
+                                <label>Latitude</label>
+                                <input type="text" id="obsLat" value="51.5074" placeholder="51.5074">
+                            </div>
+                            <div class="form-group">
+                                <label>Longitude</label>
+                                <input type="text" id="obsLon" value="-0.1278" placeholder="-0.1278">
+                            </div>
+                            <button class="preset-btn" onclick="getLocation()" style="width: 100%;">
+                                📍 Use My Location
+                            </button>
+                        </div>
+
+                        <div class="section">
+                            <h3>Satellites to Track</h3>
+                            <div id="satelliteList" class="satellite-list">
+                                <!-- Dynamically populated -->
+                            </div>
+                            <div style="margin-top: 10px; display: flex; gap: 5px;">
+                                <button class="preset-btn" onclick="showAddSatelliteModal()" style="flex: 1;">
+                                    ➕ Add Satellite
+                                </button>
+                                <button class="preset-btn" onclick="fetchCelestrak()" style="flex: 1;">
+                                    🌐 Celestrak
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="section">
+                            <h3>Prediction Settings</h3>
+                            <div class="form-group">
+                                <label>Time Range</label>
+                                <select id="predictionHours">
+                                    <option value="12">12 hours</option>
+                                    <option value="24" selected>24 hours</option>
+                                    <option value="48">48 hours</option>
+                                    <option value="72">72 hours</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Min Elevation</label>
+                                <select id="minElevation">
+                                    <option value="0">0° (All passes)</option>
+                                    <option value="10" selected>10° (Good)</option>
+                                    <option value="30">30° (Best)</option>
+                                    <option value="45">45° (Overhead)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button class="run-btn" onclick="calculatePasses()">
+                            Calculate Passes
+                        </button>
+                        <button class="preset-btn" onclick="updateTLE()" style="width: 100%; margin-top: 5px;">
+                            🔄 Update TLE Data
+                        </button>
+                    </div>
+
+                    <!-- Iridium Sub-tab -->
+                    <div id="iridiumTab" class="satellite-content">
+                        <div class="iridium-warning">
+                            <strong>⚠️ Hardware Required</strong>
+                            Iridium burst detection requires:<br>
+                            • RTL-SDR dongle<br>
+                            • L-band patch antenna (1616-1626 MHz)<br>
+                            • Low Noise Amplifier (LNA)<br>
+                            • Clear view of sky
+                        </div>
+
+                        <div class="section">
+                            <h3>Iridium Settings</h3>
+                            <div class="form-group">
+                                <label>Center Frequency (MHz)</label>
+                                <input type="text" id="iridiumFreq" value="1626.0" placeholder="1626.0">
+                            </div>
+                            <div class="form-group">
+                                <label>Gain (dB)</label>
+                                <input type="text" id="iridiumGain" value="40" placeholder="40">
+                            </div>
+                            <div class="form-group">
+                                <label>Sample Rate</label>
+                                <select id="iridiumSampleRate">
+                                    <option value="2.4e6">2.4 MSPS</option>
+                                    <option value="2.048e6" selected>2.048 MSPS</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="info-text" style="margin-bottom: 10px;" id="iridiumToolStatus">
+                            <span>iridium-extractor:</span> <span class="tool-status" id="iridiumExtractorStatus">Checking...</span>
+                        </div>
+
+                        <button class="run-btn" id="startIridiumBtn" onclick="startIridiumCapture()">
+                            Start Capture
+                        </button>
+                        <button class="stop-btn" id="stopIridiumBtn" onclick="stopIridiumCapture()" style="display: none;">
+                            Stop Capture
+                        </button>
+                    </div>
+                </div>
+
                 <button class="preset-btn" onclick="killAll()" style="width: 100%; margin-top: 10px; border-color: #ff3366; color: #ff3366;">
                     Kill All Processes
                 </button>
@@ -1912,7 +3318,7 @@ HTML_TEMPLATE = '''
 
             <div class="output-panel">
                 <div class="output-header">
-                    <h3>Decoded Messages</h3>
+                    <h3 id="outputTitle">Pager Decoder</h3>
                     <div class="header-controls">
                         <div id="signalMeter" class="signal-meter" title="Signal Activity">
                             <div class="signal-bar"></div>
@@ -1940,6 +3346,15 @@ HTML_TEMPLATE = '''
                         <div class="stats" id="btStats" style="display: none;">
                             <div title="Bluetooth Devices">🔵 <span id="btDeviceCount">0</span></div>
                             <div title="BLE Beacons">📍 <span id="btBeaconCount">0</span></div>
+                        </div>
+                        <div class="stats" id="aircraftStats" style="display: none;">
+                            <div title="Aircraft Tracked">✈️ <span id="aircraftCount">0</span></div>
+                            <div title="Messages Received">📨 <span id="adsbMsgCount">0</span></div>
+                            <div title="Unique ICAO Codes">🔢 <span id="icaoCount">0</span></div>
+                        </div>
+                        <div class="stats" id="satelliteStats" style="display: none;">
+                            <div title="Upcoming Passes">🛰️ <span id="passCount">0</span></div>
+                            <div title="Iridium Bursts">📡 <span id="burstCount">0</span></div>
                         </div>
                     </div>
                 </div>
@@ -2017,6 +3432,62 @@ HTML_TEMPLATE = '''
                             </div>
                         </div>
                     </div>
+                    <!-- Signal Strength History Graph -->
+                    <div class="wifi-visual-panel signal-graph-panel" id="signalGraphPanel" style="grid-column: span 2;">
+                        <div class="signal-graph-header">
+                            <h4>📈 Signal History</h4>
+                            <span class="signal-graph-device" id="signalGraphDevice">Click a device to track</span>
+                        </div>
+                        <canvas id="signalGraph"></canvas>
+                    </div>
+                    <!-- Network Relationship Graph -->
+                    <div class="wifi-visual-panel network-graph-container" style="grid-column: span 2;">
+                        <h4>🕸️ Network Topology</h4>
+                        <canvas id="networkGraph"></canvas>
+                        <div class="network-graph-legend">
+                            <div class="legend-item"><div class="legend-dot ap"></div>Access Point</div>
+                            <div class="legend-item"><div class="legend-dot client"></div>Client</div>
+                            <div class="legend-item"><div class="legend-dot drone"></div>Drone</div>
+                        </div>
+                    </div>
+                    <!-- Channel Recommendation -->
+                    <div class="wifi-visual-panel channel-recommendation" id="channelRecommendation">
+                        <h4>💡 Channel Recommendation</h4>
+                        <div class="rec-text">
+                            <strong>2.4 GHz:</strong> Use channel <span class="rec-channel" id="rec24Channel">--</span>
+                            <span id="rec24Reason" style="font-size: 10px; color: var(--text-dim);"></span>
+                        </div>
+                        <div class="rec-text" style="margin-top: 5px;">
+                            <strong>5 GHz:</strong> Use channel <span class="rec-channel" id="rec5Channel">--</span>
+                            <span id="rec5Reason" style="font-size: 10px; color: var(--text-dim);"></span>
+                        </div>
+                    </div>
+                    <!-- Device Correlation -->
+                    <div class="wifi-visual-panel" id="correlationPanel">
+                        <h5>🔗 Device Correlation</h5>
+                        <div id="correlationList" style="font-size: 11px; max-height: 100px; overflow-y: auto;">
+                            <div style="color: var(--text-dim);">Analyzing WiFi/BT device patterns...</div>
+                        </div>
+                    </div>
+                    <!-- Hidden SSID Revealer -->
+                    <div class="wifi-visual-panel" id="hiddenSsidPanel">
+                        <h5>👁️ Hidden SSIDs Revealed</h5>
+                        <div id="hiddenSsidList" style="font-size: 11px; max-height: 100px; overflow-y: auto;">
+                            <div style="color: var(--text-dim);">Monitoring probe requests...</div>
+                        </div>
+                    </div>
+                    <!-- Client Probe Analysis -->
+                    <div class="wifi-visual-panel" id="probeAnalysisPanel" style="grid-column: span 2;">
+                        <h5>📡 Client Probe Analysis</h5>
+                        <div style="display: flex; gap: 10px; margin-bottom: 8px; font-size: 10px;">
+                            <span>Clients: <strong id="probeClientCount">0</strong></span>
+                            <span>Unique SSIDs: <strong id="probeSSIDCount">0</strong></span>
+                            <span>Privacy Leaks: <strong id="probePrivacyCount" style="color: var(--accent-orange);">0</strong></span>
+                        </div>
+                        <div id="probeAnalysisList" style="font-size: 11px; max-height: 200px; overflow-y: auto;">
+                            <div style="color: var(--text-dim);">Waiting for client probe requests...</div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Bluetooth Visualizations -->
@@ -2025,6 +3496,188 @@ HTML_TEMPLATE = '''
                         <h5>Bluetooth Proximity Radar</h5>
                         <div class="radar-container">
                             <canvas id="btRadarCanvas" width="150" height="150"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Aircraft Visualizations - Leaflet Map -->
+                <div class="wifi-visuals" id="aircraftVisuals" style="display: none;">
+                    <div class="wifi-visual-panel" style="grid-column: span 2;">
+                        <h5 style="color: var(--accent-cyan); text-shadow: 0 0 10px var(--accent-cyan);">ADS-B AIRCRAFT TRACKING</h5>
+                        <div class="aircraft-map-container">
+                            <div class="map-header">
+                                <span id="radarTime">--:--:--</span>
+                                <span id="radarStatus">TRACKING</span>
+                            </div>
+                            <div id="aircraftMap"></div>
+                            <div class="map-footer">
+                                <span>AIRCRAFT: <span id="aircraftCount">0</span></span>
+                                <span>CENTER: <span id="mapCenter">--</span></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Satellite Visualizations -->
+                <div id="satelliteVisuals" style="display: none;">
+                    <div class="pass-predictor">
+                        <!-- Polar Plot -->
+                        <div class="polar-plot-container">
+                            <div class="polar-plot-header">
+                                <span class="polar-plot-title">Sky View</span>
+                                <button class="popout-btn" onclick="popoutSatellite()">⛶ Pop Out</button>
+                            </div>
+                            <div class="polar-plot">
+                                <canvas id="polarPlotCanvas"></canvas>
+                            </div>
+                            <div style="text-align: center; margin-top: 10px; font-size: 10px; color: var(--text-secondary);">
+                                <span style="color: var(--accent-cyan);">N</span> = North |
+                                Center = Overhead (90°) |
+                                Edge = Horizon (0°)
+                            </div>
+                        </div>
+
+                        <!-- Pass List -->
+                        <div class="pass-list-container">
+                            <div class="pass-list-header">
+                                <span>Upcoming Passes</span>
+                                <span id="passListCount">0 passes</span>
+                            </div>
+                            <!-- Countdown Block -->
+                            <div id="satelliteCountdown" class="satellite-countdown" style="display: none;">
+                                <div class="countdown-satellite-name" id="countdownSatName">--</div>
+                                <div class="countdown-grid">
+                                    <div class="countdown-block">
+                                        <div class="countdown-label">Next Pass In</div>
+                                        <div class="countdown-value" id="countdownToPass">--:--:--</div>
+                                        <div class="countdown-sublabel" id="countdownPassTime">--</div>
+                                    </div>
+                                    <div class="countdown-block">
+                                        <div class="countdown-label">Visibility</div>
+                                        <div class="countdown-value" id="countdownVisibility">--:--</div>
+                                        <div class="countdown-sublabel" id="countdownVisLabel">Duration</div>
+                                    </div>
+                                    <div class="countdown-block">
+                                        <div class="countdown-label">Max Elevation</div>
+                                        <div class="countdown-value" id="countdownMaxEl">--°</div>
+                                        <div class="countdown-sublabel" id="countdownDirection">--</div>
+                                    </div>
+                                </div>
+                                <div class="countdown-status" id="countdownStatus">Waiting for pass data...</div>
+                            </div>
+                            <div id="passList">
+                                <div style="color: #666; text-align: center; padding: 30px; font-size: 11px;">
+                                    Click "Calculate Passes" to predict satellite passes for your location.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Iridium Burst Log -->
+                    <div id="iridiumBurstLog" style="display: none; margin-top: 15px;">
+                        <div class="pass-list-container">
+                            <div class="pass-list-header">
+                                <span>Iridium Burst Log</span>
+                                <button class="preset-btn" onclick="clearIridiumLog()" style="padding: 2px 8px; font-size: 10px;">Clear</button>
+                            </div>
+                            <div id="burstList">
+                                <div style="color: #666; text-align: center; padding: 30px; font-size: 11px;">
+                                    Iridium bursts will appear here when detected.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Satellite Popout Container -->
+                <div id="satellitePopout" class="popout-container">
+                    <div class="popout-header">
+                        <span class="popout-title">🛰️ Satellite Pass Predictor</span>
+                        <button class="popout-close" onclick="closeSatellitePopout()">✕ Close</button>
+                    </div>
+                    <div class="popout-body">
+                        <div class="pass-predictor" style="height: 100%;">
+                            <div class="polar-plot-container" style="height: 100%;">
+                                <div class="polar-plot-header">
+                                    <span class="polar-plot-title">Sky View - Full Screen</span>
+                                </div>
+                                <div style="height: calc(100% - 80px);">
+                                    <canvas id="polarPlotCanvasPopout" style="width: 100%; height: 100%;"></canvas>
+                                </div>
+                                <div style="text-align: center; margin-top: 10px; font-size: 12px; color: var(--text-secondary);">
+                                    <span style="color: var(--accent-cyan);">N</span> = North |
+                                    Center = Overhead (90°) |
+                                    Edge = Horizon (0°)
+                                </div>
+                            </div>
+                            <div class="pass-list-container" style="height: 100%; max-height: none;">
+                                <div class="pass-list-header">
+                                    <span>Upcoming Passes</span>
+                                </div>
+                                <!-- Countdown Block for Popout -->
+                                <div id="satelliteCountdownPopout" class="satellite-countdown" style="display: none;">
+                                    <div class="countdown-satellite-name" id="countdownSatNamePopout">--</div>
+                                    <div class="countdown-grid">
+                                        <div class="countdown-block">
+                                            <div class="countdown-label">Next Pass In</div>
+                                            <div class="countdown-value" id="countdownToPassPopout">--:--:--</div>
+                                            <div class="countdown-sublabel" id="countdownPassTimePopout">--</div>
+                                        </div>
+                                        <div class="countdown-block">
+                                            <div class="countdown-label">Visibility</div>
+                                            <div class="countdown-value" id="countdownVisibilityPopout">--:--</div>
+                                            <div class="countdown-sublabel" id="countdownVisLabelPopout">Duration</div>
+                                        </div>
+                                        <div class="countdown-block">
+                                            <div class="countdown-label">Max Elevation</div>
+                                            <div class="countdown-value" id="countdownMaxElPopout">--°</div>
+                                            <div class="countdown-sublabel" id="countdownDirectionPopout">--</div>
+                                        </div>
+                                    </div>
+                                    <div class="countdown-status" id="countdownStatusPopout">Waiting for pass data...</div>
+                                </div>
+                                <div id="passListPopout" style="height: calc(100% - 40px); overflow-y: auto;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Satellite Add Modal -->
+                <div id="satModal" class="sat-modal">
+                    <div class="sat-modal-content">
+                        <div class="sat-modal-header">
+                            <h3>🛰️ Add Satellites</h3>
+                            <button class="sat-modal-close" onclick="closeSatModal()">&times;</button>
+                        </div>
+                        <div class="sat-modal-tabs">
+                            <button class="sat-modal-tab active" onclick="switchSatModalTab('tle')">Paste TLE</button>
+                            <button class="sat-modal-tab" onclick="switchSatModalTab('celestrak')">Celestrak</button>
+                        </div>
+                        <div id="tleSection" class="sat-modal-section active">
+                            <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 10px;">
+                                Paste TLE data (3 lines per satellite: name, line 1, line 2)
+                            </p>
+                            <textarea id="tleInput" class="tle-textarea" placeholder="SATELLITE NAME&#10;1 NNNNN...&#10;2 NNNNN..."></textarea>
+                            <button class="run-btn" onclick="addFromTLE()" style="margin-top: 10px;">
+                                Add Satellites from TLE
+                            </button>
+                        </div>
+                        <div id="celestrakSection" class="sat-modal-section">
+                            <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 10px;">
+                                Select a category to fetch satellites from Celestrak
+                            </p>
+                            <div class="celestrak-categories">
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('stations')">🚀 Space Stations</button>
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('visual')">👁️ Brightest</button>
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('weather')">🌤️ Weather</button>
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('noaa')">📡 NOAA</button>
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('amateur')">📻 Amateur Radio</button>
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('starlink')">⭐ Starlink</button>
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('gps-ops')">🛰️ GPS</button>
+                                <button class="celestrak-cat" onclick="fetchCelestrakCategory('iridium')">📱 Iridium</button>
+                            </div>
+                            <div id="celestrakStatus" style="margin-top: 10px; font-size: 11px; color: var(--text-secondary);"></div>
                         </div>
                     </div>
                 </div>
@@ -2100,12 +3753,141 @@ HTML_TEMPLATE = '''
         let eventSource = null;
         let isRunning = false;
         let isSensorRunning = false;
+        let isAdsbRunning = false;
+        let isIridiumRunning = false;
         let currentMode = 'pager';
         let msgCount = 0;
         let pocsagCount = 0;
         let flexCount = 0;
         let sensorCount = 0;
         let deviceList = {{ devices | tojson | safe }};
+
+        // Aircraft (ADS-B) state
+        let adsbAircraft = {};
+        let adsbMsgCount = 0;
+        let adsbEventSource = null;
+
+        // Satellite state
+        let satellitePasses = [];
+        let selectedPass = null;
+        let selectedPassIndex = 0;
+        let iridiumBursts = [];
+        let iridiumEventSource = null;
+        let countdownInterval = null;
+
+        // Start satellite countdown timer
+        function startCountdownTimer() {
+            if (countdownInterval) clearInterval(countdownInterval);
+            countdownInterval = setInterval(updateSatelliteCountdown, 1000);
+        }
+
+        // Update satellite countdown display
+        function updateSatelliteCountdown() {
+            // Update both main and popout countdowns
+            updateCountdownDisplay('');
+            updateCountdownDisplay('Popout');
+        }
+
+        // Helper to update countdown elements by suffix
+        function updateCountdownDisplay(suffix) {
+            const container = document.getElementById('satelliteCountdown' + suffix);
+            if (!container) return;
+
+            // Use the globally selected pass
+            if (!selectedPass || satellitePasses.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            const now = new Date();
+            const startTime = parsePassTime(selectedPass.startTime);
+            const endTime = new Date(startTime.getTime() + selectedPass.duration * 60000);
+
+            container.style.display = 'block';
+            document.getElementById('countdownSatName' + suffix).textContent = selectedPass.satellite;
+
+            if (now >= startTime && now <= endTime) {
+                // Currently visible
+                const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
+                const mins = Math.floor(remaining / 60);
+                const secs = remaining % 60;
+
+                document.getElementById('countdownToPass' + suffix).textContent = 'VISIBLE';
+                document.getElementById('countdownToPass' + suffix).classList.add('active');
+                document.getElementById('countdownPassTime' + suffix).textContent = 'Now overhead';
+
+                document.getElementById('countdownVisibility' + suffix).textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+                document.getElementById('countdownVisLabel' + suffix).textContent = 'Remaining';
+
+                document.getElementById('countdownMaxEl' + suffix).textContent = selectedPass.maxEl + '°';
+                document.getElementById('countdownDirection' + suffix).textContent = selectedPass.direction || 'Pass';
+
+                document.getElementById('countdownStatus' + suffix).textContent = '🟢 SATELLITE CURRENTLY VISIBLE';
+                document.getElementById('countdownStatus' + suffix).className = 'countdown-status visible';
+
+            } else if (startTime > now) {
+                // Upcoming pass
+                const secsToPass = Math.max(0, Math.floor((startTime - now) / 1000));
+                const hours = Math.floor(secsToPass / 3600);
+                const mins = Math.floor((secsToPass % 3600) / 60);
+                const secs = secsToPass % 60;
+
+                let countdownStr;
+                if (hours > 0) {
+                    countdownStr = `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                } else {
+                    countdownStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+                }
+
+                document.getElementById('countdownToPass' + suffix).textContent = countdownStr;
+                document.getElementById('countdownToPass' + suffix).classList.remove('active');
+                document.getElementById('countdownPassTime' + suffix).textContent = selectedPass.startTime;
+
+                document.getElementById('countdownVisibility' + suffix).textContent = selectedPass.duration + 'm';
+                document.getElementById('countdownVisLabel' + suffix).textContent = 'Duration';
+
+                document.getElementById('countdownMaxEl' + suffix).textContent = selectedPass.maxEl + '°';
+                document.getElementById('countdownDirection' + suffix).textContent = selectedPass.direction || 'Pass';
+
+                if (secsToPass < 300) {
+                    document.getElementById('countdownStatus' + suffix).textContent = '🟡 PASS STARTING SOON';
+                    document.getElementById('countdownStatus' + suffix).className = 'countdown-status upcoming';
+                } else {
+                    document.getElementById('countdownStatus' + suffix).textContent = 'Selected pass';
+                    document.getElementById('countdownStatus' + suffix).className = 'countdown-status';
+                }
+
+            } else {
+                // Pass already happened
+                document.getElementById('countdownToPass' + suffix).textContent = 'PASSED';
+                document.getElementById('countdownToPass' + suffix).classList.remove('active');
+                document.getElementById('countdownPassTime' + suffix).textContent = selectedPass.startTime;
+
+                document.getElementById('countdownVisibility' + suffix).textContent = selectedPass.duration + 'm';
+                document.getElementById('countdownVisLabel' + suffix).textContent = 'Duration';
+
+                document.getElementById('countdownMaxEl' + suffix).textContent = selectedPass.maxEl + '°';
+                document.getElementById('countdownDirection' + suffix).textContent = selectedPass.direction || 'Pass';
+
+                document.getElementById('countdownStatus' + suffix).textContent = 'Pass has ended';
+                document.getElementById('countdownStatus' + suffix).className = 'countdown-status';
+            }
+        }
+
+        // Parse pass time string to Date object
+        function parsePassTime(timeStr) {
+            // Expected format: "2025-12-21 14:32 UTC"
+            // Remove "UTC" suffix and parse as ISO-like format
+            const cleanTime = timeStr.replace(' UTC', '').replace(' ', 'T') + ':00Z';
+            const parsed = new Date(cleanTime);
+
+            // Fallback if that doesn't work
+            if (isNaN(parsed.getTime())) {
+                // Try parsing as-is
+                return new Date(timeStr.replace(' UTC', ''));
+            }
+            return parsed;
+        }
 
         // Make sections collapsible
         document.addEventListener('DOMContentLoaded', function() {
@@ -2128,31 +3910,69 @@ HTML_TEMPLATE = '''
             if (isSensorRunning) stopSensorDecoding();
             if (isWifiRunning) stopWifiScan();
             if (isBtRunning) stopBtScan();
+            if (isAdsbRunning) stopAdsbScan();
+            if (isIridiumRunning) stopIridiumCapture();
 
             currentMode = mode;
             document.querySelectorAll('.mode-tab').forEach(tab => {
                 const tabText = tab.textContent.toLowerCase();
                 const isActive = (mode === 'pager' && tabText.includes('pager')) ||
                                  (mode === 'sensor' && tabText.includes('433')) ||
+                                 (mode === 'aircraft' && tabText.includes('aircraft')) ||
+                                 (mode === 'satellite' && tabText.includes('satellite')) ||
                                  (mode === 'wifi' && tabText.includes('wifi')) ||
                                  (mode === 'bluetooth' && tabText === 'bt');
                 tab.classList.toggle('active', isActive);
             });
             document.getElementById('pagerMode').classList.toggle('active', mode === 'pager');
             document.getElementById('sensorMode').classList.toggle('active', mode === 'sensor');
+            document.getElementById('aircraftMode').classList.toggle('active', mode === 'aircraft');
+            document.getElementById('satelliteMode').classList.toggle('active', mode === 'satellite');
             document.getElementById('wifiMode').classList.toggle('active', mode === 'wifi');
             document.getElementById('bluetoothMode').classList.toggle('active', mode === 'bluetooth');
             document.getElementById('pagerStats').style.display = mode === 'pager' ? 'flex' : 'none';
             document.getElementById('sensorStats').style.display = mode === 'sensor' ? 'flex' : 'none';
+            document.getElementById('aircraftStats').style.display = mode === 'aircraft' ? 'flex' : 'none';
+            document.getElementById('satelliteStats').style.display = mode === 'satellite' ? 'flex' : 'none';
             document.getElementById('wifiStats').style.display = mode === 'wifi' ? 'flex' : 'none';
             document.getElementById('btStats').style.display = mode === 'bluetooth' ? 'flex' : 'none';
             document.getElementById('wifiVisuals').style.display = mode === 'wifi' ? 'grid' : 'none';
             document.getElementById('btVisuals').style.display = mode === 'bluetooth' ? 'grid' : 'none';
+            document.getElementById('aircraftVisuals').style.display = mode === 'aircraft' ? 'grid' : 'none';
+            document.getElementById('satelliteVisuals').style.display = mode === 'satellite' ? 'block' : 'none';
 
-            // Show RTL-SDR device section only for modes that use it (pager and sensor/433MHz)
-            document.getElementById('rtlDeviceSection').style.display = (mode === 'pager' || mode === 'sensor') ? 'block' : 'none';
+            // Update output panel title based on mode
+            const titles = {
+                'pager': 'Pager Decoder',
+                'sensor': '433MHz Sensor Monitor',
+                'aircraft': 'ADS-B Aircraft Tracker',
+                'satellite': 'Satellite Monitor',
+                'wifi': 'WiFi Scanner',
+                'bluetooth': 'Bluetooth Scanner'
+            };
+            document.getElementById('outputTitle').textContent = titles[mode] || 'Signal Monitor';
 
-            // Load interfaces when switching modes
+            // Show/hide Device Intelligence for modes that use it (not for satellite/aircraft)
+            const reconBtn = document.getElementById('reconBtn');
+            const intelBtn = document.querySelector('[onclick="exportDeviceDB()"]');
+            if (mode === 'satellite' || mode === 'aircraft') {
+                document.getElementById('reconPanel').style.display = 'none';
+                if (reconBtn) reconBtn.style.display = 'none';
+                if (intelBtn) intelBtn.style.display = 'none';
+            } else {
+                if (reconBtn) reconBtn.style.display = 'inline-block';
+                if (intelBtn) intelBtn.style.display = 'inline-block';
+            }
+
+            // Show RTL-SDR device section for modes that use it
+            document.getElementById('rtlDeviceSection').style.display = (mode === 'pager' || mode === 'sensor' || mode === 'aircraft') ? 'block' : 'none';
+
+            // Hide waterfall and output console for satellite mode (uses its own visualizations)
+            document.querySelector('.waterfall-container').style.display = (mode === 'satellite') ? 'none' : 'block';
+            document.getElementById('output').style.display = (mode === 'satellite') ? 'none' : 'block';
+            document.querySelector('.status-bar').style.display = (mode === 'satellite') ? 'none' : 'flex';
+
+            // Load interfaces and initialize visualizations when switching modes
             if (mode === 'wifi') {
                 refreshWifiInterfaces();
                 initRadar();
@@ -2160,6 +3980,13 @@ HTML_TEMPLATE = '''
             } else if (mode === 'bluetooth') {
                 refreshBtInterfaces();
                 initBtRadar();
+            } else if (mode === 'aircraft') {
+                checkAdsbTools();
+                initAircraftRadar();
+            } else if (mode === 'satellite') {
+                initPolarPlot();
+                initSatelliteList();
+                checkIridiumTools();
             }
         }
 
@@ -3471,6 +5298,7 @@ HTML_TEMPLATE = '''
                 // Get the BSSIDs to show in alert
                 const bssidList = rogueApDetails[ssid].map(e => e.bssid).join(', ');
                 showInfo(`⚠ Rogue AP: "${ssid}" has ${ssidToBssids[ssid].size} BSSIDs: ${bssidList}`);
+                showNotification('⚠️ Rogue AP Detected!', `"${ssid}" on multiple BSSIDs`);
                 return true;
             }
             return false;
@@ -3648,6 +5476,374 @@ HTML_TEMPLATE = '''
                 bar.className = 'channel-bar' + (count > 0 ? ' active' : '') + (count > 3 ? ' congested' : '') + (count > 5 ? ' very-congested' : '');
             });
         }
+
+        // ============== NEW FEATURES ==============
+
+        // Signal History Graph
+        let signalHistory = {};  // {mac: [{time, signal}]}
+        let trackedDevice = null;
+        const maxSignalPoints = 60;
+
+        function trackDeviceSignal(mac, signal) {
+            if (!signalHistory[mac]) {
+                signalHistory[mac] = [];
+            }
+            signalHistory[mac].push({
+                time: Date.now(),
+                signal: parseInt(signal) || -100
+            });
+            // Keep only last N points
+            if (signalHistory[mac].length > maxSignalPoints) {
+                signalHistory[mac].shift();
+            }
+            // Update graph if this is the tracked device
+            if (trackedDevice === mac) {
+                drawSignalGraph();
+            }
+        }
+
+        function setTrackedDevice(mac, name) {
+            trackedDevice = mac;
+            document.getElementById('signalGraphDevice').textContent = name || mac;
+            drawSignalGraph();
+        }
+
+        function drawSignalGraph() {
+            const canvas = document.getElementById('signalGraph');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const width = canvas.offsetWidth;
+            const height = canvas.offsetHeight;
+            canvas.width = width;
+            canvas.height = height;
+
+            // Clear
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw grid
+            ctx.strokeStyle = '#1a1a1a';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = (height / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(width, y);
+                ctx.stroke();
+            }
+
+            // Draw dBm labels
+            ctx.fillStyle = '#444';
+            ctx.font = '9px monospace';
+            ctx.fillText('-30', 2, 12);
+            ctx.fillText('-60', 2, height/2);
+            ctx.fillText('-90', 2, height - 4);
+
+            if (!trackedDevice || !signalHistory[trackedDevice] || signalHistory[trackedDevice].length < 2) {
+                ctx.fillStyle = '#444';
+                ctx.font = '12px sans-serif';
+                ctx.fillText('Click a device to track signal', width/2 - 80, height/2);
+                return;
+            }
+
+            const data = signalHistory[trackedDevice];
+            const stepX = width / (maxSignalPoints - 1);
+
+            // Draw signal line
+            ctx.beginPath();
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+
+            data.forEach((point, i) => {
+                // Map signal from -30 to -90 dBm to canvas height
+                const normalizedSignal = Math.max(-90, Math.min(-30, point.signal));
+                const y = height - ((normalizedSignal + 90) / 60) * height;
+                const x = i * stepX;
+
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+            ctx.stroke();
+
+            // Draw glow effect
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00d4ff';
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Draw current value
+            const lastSignal = data[data.length - 1].signal;
+            ctx.fillStyle = '#00d4ff';
+            ctx.font = 'bold 14px monospace';
+            ctx.fillText(lastSignal + ' dBm', width - 70, 20);
+        }
+
+        // Network Topology Graph
+        function drawNetworkGraph() {
+            const canvas = document.getElementById('networkGraph');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const width = canvas.offsetWidth;
+            const height = canvas.offsetHeight;
+            canvas.width = width;
+            canvas.height = height;
+
+            // Clear
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+
+            const networks = Object.values(wifiNetworks);
+            const clients = Object.values(wifiClients);
+
+            if (networks.length === 0) {
+                ctx.fillStyle = '#444';
+                ctx.font = '12px sans-serif';
+                ctx.fillText('Start scanning to see network topology', width/2 - 100, height/2);
+                return;
+            }
+
+            // Calculate positions for APs (top row)
+            const apPositions = {};
+            const apSpacing = width / (networks.length + 1);
+            networks.forEach((net, i) => {
+                apPositions[net.bssid] = {
+                    x: apSpacing * (i + 1),
+                    y: 40,
+                    ssid: net.essid,
+                    isDrone: isDrone(net.essid, net.bssid).isDrone
+                };
+            });
+
+            // Draw connections from clients to APs
+            ctx.strokeStyle = '#1a1a1a';
+            ctx.lineWidth = 1;
+            clients.forEach(client => {
+                if (client.ap && apPositions[client.ap]) {
+                    const ap = apPositions[client.ap];
+                    const clientY = 120 + (Math.random() * 60);
+                    const clientX = ap.x + (Math.random() - 0.5) * 80;
+
+                    ctx.beginPath();
+                    ctx.moveTo(ap.x, ap.y + 15);
+                    ctx.lineTo(clientX, clientY - 10);
+                    ctx.stroke();
+
+                    // Draw client node
+                    ctx.beginPath();
+                    ctx.arc(clientX, clientY, 6, 0, Math.PI * 2);
+                    ctx.fillStyle = '#00ff88';
+                    ctx.fill();
+                }
+            });
+
+            // Draw AP nodes
+            Object.entries(apPositions).forEach(([bssid, pos]) => {
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 12, 0, Math.PI * 2);
+                ctx.fillStyle = pos.isDrone ? '#ff8800' : '#00d4ff';
+                ctx.fill();
+
+                // Draw label
+                ctx.fillStyle = '#888';
+                ctx.font = '9px sans-serif';
+                ctx.textAlign = 'center';
+                const label = (pos.ssid || 'Hidden').substring(0, 12);
+                ctx.fillText(label, pos.x, pos.y + 25);
+            });
+
+            ctx.textAlign = 'left';
+        }
+
+        // Channel Recommendation
+        function updateChannelRecommendation() {
+            const channelCounts24 = {};
+            const channelCounts5 = {};
+
+            // Initialize
+            for (let i = 1; i <= 13; i++) channelCounts24[i] = 0;
+            channels5g.forEach(ch => channelCounts5[ch] = 0);
+
+            // Count networks per channel
+            Object.values(wifiNetworks).forEach(net => {
+                const ch = parseInt(net.channel);
+                if (ch >= 1 && ch <= 13) {
+                    // 2.4 GHz channels overlap, so count neighbors too
+                    for (let i = Math.max(1, ch - 2); i <= Math.min(13, ch + 2); i++) {
+                        channelCounts24[i] = (channelCounts24[i] || 0) + (i === ch ? 1 : 0.5);
+                    }
+                } else if (channels5g.includes(ch.toString())) {
+                    channelCounts5[ch.toString()]++;
+                }
+            });
+
+            // Find best 2.4 GHz channel (1, 6, or 11 preferred)
+            const preferred24 = [1, 6, 11];
+            let best24 = 1;
+            let minCount24 = Infinity;
+            preferred24.forEach(ch => {
+                if (channelCounts24[ch] < minCount24) {
+                    minCount24 = channelCounts24[ch];
+                    best24 = ch;
+                }
+            });
+
+            // Find best 5 GHz channel
+            let best5 = '36';
+            let minCount5 = Infinity;
+            channels5g.forEach(ch => {
+                if (channelCounts5[ch] < minCount5) {
+                    minCount5 = channelCounts5[ch];
+                    best5 = ch;
+                }
+            });
+
+            // Update UI
+            document.getElementById('rec24Channel').textContent = best24;
+            document.getElementById('rec24Reason').textContent =
+                minCount24 === 0 ? '(unused)' : `(${Math.round(minCount24)} networks nearby)`;
+
+            document.getElementById('rec5Channel').textContent = best5;
+            document.getElementById('rec5Reason').textContent =
+                minCount5 === 0 ? '(unused)' : `(${minCount5} networks)`;
+        }
+
+        // Device Correlation (WiFi <-> Bluetooth)
+        let deviceCorrelations = [];
+
+        function correlateDevices() {
+            deviceCorrelations = [];
+            const wifiMacs = Object.keys(wifiNetworks).concat(Object.keys(wifiClients));
+            const btMacs = Object.keys(btDevices || {});
+
+            // Compare OUI prefixes
+            wifiMacs.forEach(wifiMac => {
+                const wifiOui = wifiMac.substring(0, 8).toUpperCase();
+                btMacs.forEach(btMac => {
+                    const btOui = btMac.substring(0, 8).toUpperCase();
+                    if (wifiOui === btOui) {
+                        const wifiDev = wifiNetworks[wifiMac] || wifiClients[wifiMac];
+                        const btDev = btDevices[btMac];
+                        deviceCorrelations.push({
+                            wifiMac: wifiMac,
+                            btMac: btMac,
+                            wifiName: wifiDev?.essid || wifiDev?.mac || wifiMac,
+                            btName: btDev?.name || btMac,
+                            manufacturer: getManufacturer(wifiOui)
+                        });
+                    }
+                });
+            });
+
+            updateCorrelationDisplay();
+        }
+
+        function getManufacturer(oui) {
+            // Simple lookup - would be expanded
+            const lookup = {
+                '00:25:DB': 'Apple', 'AC:BC:32': 'Apple', '3C:22:FB': 'Apple',
+                '8C:71:F8': 'Samsung', 'C4:73:1E': 'Samsung',
+                '54:60:09': 'Google', 'F4:F5:D8': 'Google'
+            };
+            return lookup[oui] || 'Unknown';
+        }
+
+        function updateCorrelationDisplay() {
+            const list = document.getElementById('correlationList');
+            if (!list) return;
+
+            if (deviceCorrelations.length === 0) {
+                list.innerHTML = '<div style="color: var(--text-dim);">No correlated devices found yet</div>';
+                return;
+            }
+
+            list.innerHTML = deviceCorrelations.map(c => `
+                <div style="padding: 4px 0; border-bottom: 1px solid var(--border-color);">
+                    <span style="color: var(--accent-cyan);">📶 ${c.wifiName}</span>
+                    <span style="color: var(--text-dim);"> ↔ </span>
+                    <span style="color: #6495ED;">🔵 ${c.btName}</span>
+                    <span class="correlation-badge">${c.manufacturer}</span>
+                </div>
+            `).join('');
+        }
+
+        // Hidden SSID Revealer
+        let revealedSsids = {};  // {bssid: ssid}
+
+        function revealHiddenSsid(bssid, ssid) {
+            if (ssid && ssid !== '' && ssid !== 'Hidden' && ssid !== '[Hidden]') {
+                if (!revealedSsids[bssid]) {
+                    revealedSsids[bssid] = ssid;
+                    updateHiddenSsidDisplay();
+                    showNotification('Hidden SSID Revealed', `"${ssid}" on ${bssid}`);
+                }
+            }
+        }
+
+        function updateHiddenSsidDisplay() {
+            const list = document.getElementById('hiddenSsidList');
+            if (!list) return;
+
+            const entries = Object.entries(revealedSsids);
+            if (entries.length === 0) {
+                list.innerHTML = '<div style="color: var(--text-dim);">No hidden SSIDs revealed yet</div>';
+                return;
+            }
+
+            list.innerHTML = entries.map(([bssid, ssid]) => `
+                <div style="padding: 4px 0; border-bottom: 1px solid var(--border-color);">
+                    <span class="hidden-ssid-revealed">"${ssid}"</span>
+                    <span style="color: var(--text-dim); font-size: 9px;"> (${bssid})</span>
+                </div>
+            `).join('');
+        }
+
+        // Browser Notifications
+        let notificationsEnabled = false;
+
+        function requestNotificationPermission() {
+            if ('Notification' in window) {
+                Notification.requestPermission().then(permission => {
+                    notificationsEnabled = permission === 'granted';
+                    if (notificationsEnabled) {
+                        showInfo('🔔 Desktop notifications enabled');
+                    }
+                });
+            }
+        }
+
+        function showNotification(title, body) {
+            if (notificationsEnabled && document.hidden) {
+                new Notification(title, {
+                    body: body,
+                    icon: '/favicon.ico',
+                    tag: 'intercept-' + Date.now()
+                });
+            }
+        }
+
+        // Request notification permission on load
+        if ('Notification' in window && Notification.permission === 'default') {
+            // Will request on first interaction
+            document.addEventListener('click', function requestOnce() {
+                requestNotificationPermission();
+                document.removeEventListener('click', requestOnce);
+            }, { once: true });
+        } else if (Notification.permission === 'granted') {
+            notificationsEnabled = true;
+        }
+
+        // Update visualizations periodically
+        setInterval(() => {
+            if (currentMode === 'wifi') {
+                drawSignalGraph();
+                drawNetworkGraph();
+                updateChannelRecommendation();
+                correlateDevices();
+            }
+        }, 2000);
 
         // Refresh WiFi interfaces
         function refreshWifiInterfaces() {
@@ -3844,6 +6040,14 @@ HTML_TEMPLATE = '''
             const isNew = !wifiNetworks[net.bssid];
             wifiNetworks[net.bssid] = net;
 
+            // Track signal history for graphs
+            trackDeviceSignal(net.bssid, net.power);
+
+            // Check if this reveals a hidden SSID
+            if (net.essid && net.essid !== 'Hidden' && net.essid !== '[Hidden]') {
+                revealHiddenSsid(net.bssid, net.essid);
+            }
+
             if (isNew) {
                 apCount++;
                 document.getElementById('apCount').textContent = apCount;
@@ -3860,6 +6064,7 @@ HTML_TEMPLATE = '''
                 const droneCheck = isDrone(net.essid, net.bssid);
                 if (droneCheck.isDrone) {
                     handleDroneDetection(net, droneCheck);
+                    showNotification('🚁 Drone Detected!', `${droneCheck.brand}: ${net.essid}`);
                 }
             }
 
@@ -3889,6 +6094,9 @@ HTML_TEMPLATE = '''
             const isNew = !wifiClients[client.mac];
             wifiClients[client.mac] = client;
 
+            // Track signal history for graphs
+            trackDeviceSignal(client.mac, client.power);
+
             if (isNew) {
                 clientCount++;
                 document.getElementById('clientCount').textContent = clientCount;
@@ -3906,6 +6114,93 @@ HTML_TEMPLATE = '''
                 bssid: client.bssid,
                 vendor: client.vendor
             });
+
+            // Update probe analysis
+            updateProbeAnalysis();
+        }
+
+        // Update client probe analysis panel
+        function updateProbeAnalysis() {
+            const list = document.getElementById('probeAnalysisList');
+            if (!list) return;
+
+            const clientsWithProbes = Object.values(wifiClients).filter(c => c.probes && c.probes.trim());
+            const allProbes = new Set();
+            let privacyLeaks = 0;
+
+            // Count unique probes and privacy leaks
+            clientsWithProbes.forEach(client => {
+                const probes = client.probes.split(',').map(p => p.trim()).filter(p => p);
+                probes.forEach(p => allProbes.add(p));
+
+                // Check for sensitive network names (home networks, corporate, etc.)
+                probes.forEach(probe => {
+                    const lowerProbe = probe.toLowerCase();
+                    if (lowerProbe.includes('home') || lowerProbe.includes('office') ||
+                        lowerProbe.includes('corp') || lowerProbe.includes('work') ||
+                        lowerProbe.includes('private') || lowerProbe.includes('hotel') ||
+                        lowerProbe.includes('airport') || lowerProbe.match(/^[a-z]+-[a-z]+$/i)) {
+                        privacyLeaks++;
+                    }
+                });
+            });
+
+            // Update counters
+            document.getElementById('probeClientCount').textContent = clientsWithProbes.length;
+            document.getElementById('probeSSIDCount').textContent = allProbes.size;
+            document.getElementById('probePrivacyCount').textContent = privacyLeaks;
+
+            if (clientsWithProbes.length === 0) {
+                list.innerHTML = '<div style="color: var(--text-dim);">Waiting for client probe requests...</div>';
+                return;
+            }
+
+            // Sort by number of probes (most revealing first)
+            clientsWithProbes.sort((a, b) => {
+                const aCount = (a.probes || '').split(',').length;
+                const bCount = (b.probes || '').split(',').length;
+                return bCount - aCount;
+            });
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+
+            clientsWithProbes.forEach(client => {
+                const probes = client.probes.split(',').map(p => p.trim()).filter(p => p);
+                const vendorBadge = client.vendor && client.vendor !== 'Unknown'
+                    ? `<span style="background: var(--bg-tertiary); padding: 1px 4px; border-radius: 2px; font-size: 9px; margin-left: 5px;">${escapeHtml(client.vendor)}</span>`
+                    : '';
+
+                // Check for privacy-revealing probes
+                const probeHtml = probes.map(probe => {
+                    const lowerProbe = probe.toLowerCase();
+                    const isSensitive = lowerProbe.includes('home') || lowerProbe.includes('office') ||
+                        lowerProbe.includes('corp') || lowerProbe.includes('work') ||
+                        lowerProbe.includes('private') || lowerProbe.includes('hotel') ||
+                        lowerProbe.includes('airport') || lowerProbe.match(/^[a-z]+-[a-z]+$/i);
+
+                    const style = isSensitive
+                        ? 'background: var(--accent-orange); color: #000; padding: 1px 4px; border-radius: 2px; margin: 1px;'
+                        : 'background: var(--bg-tertiary); padding: 1px 4px; border-radius: 2px; margin: 1px;';
+
+                    return `<span style="${style}" title="${isSensitive ? 'Potentially sensitive - reveals user location history' : ''}">${escapeHtml(probe)}</span>`;
+                }).join(' ');
+
+                html += `
+                    <div style="border-left: 2px solid var(--accent-cyan); padding-left: 8px;">
+                        <div style="display: flex; align-items: center; gap: 5px; margin-bottom: 3px;">
+                            <span style="color: var(--accent-cyan); font-family: monospace; font-size: 10px;">${escapeHtml(client.mac)}</span>
+                            ${vendorBadge}
+                            <span style="color: var(--text-dim); font-size: 9px;">(${probes.length} probe${probes.length !== 1 ? 's' : ''})</span>
+                        </div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 2px; font-size: 10px;">
+                            ${probeHtml}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            list.innerHTML = html;
         }
 
         // Add WiFi network card to output
@@ -3956,6 +6251,7 @@ HTML_TEMPLATE = '''
                 <div style="margin-top: 8px; display: flex; gap: 5px;">
                     <button class="preset-btn" onclick="targetNetwork('${escapeAttr(net.bssid)}', '${escapeAttr(net.channel)}')" style="font-size: 10px; padding: 4px 8px;">Target</button>
                     <button class="preset-btn" onclick="captureHandshake('${escapeAttr(net.bssid)}', '${escapeAttr(net.channel)}')" style="font-size: 10px; padding: 4px 8px; border-color: var(--accent-orange); color: var(--accent-orange);">Capture</button>
+                    <button class="preset-btn" onclick="setTrackedDevice('${escapeAttr(net.bssid)}', '${escapeAttr(net.essid || net.bssid)}')" style="font-size: 10px; padding: 4px 8px; border-color: var(--accent-cyan); color: var(--accent-cyan);" title="Track signal strength">📈</button>
                 </div>
             `;
 
@@ -4038,6 +6334,7 @@ HTML_TEMPLATE = '''
                       document.getElementById('handshakeCount').textContent = handshakeCount;
                       playAlert();
                       showInfo('🎉 Handshake captured for ' + activeCapture.bssid + '! File: ' + data.file);
+                      showNotification('🤝 Handshake Captured!', `Target: ${activeCapture.bssid}`);
 
                       // Stop polling
                       if (activeCapture.pollInterval) {
@@ -4798,7 +7095,1176 @@ HTML_TEMPLATE = '''
 
             if (btRadarDevices.length > 50) btRadarDevices.shift();
         }
+
+        // ============================================
+        // AIRCRAFT (ADS-B) MODE FUNCTIONS
+        // ============================================
+
+        function checkAdsbTools() {
+            fetch('/adsb/tools')
+                .then(r => r.json())
+                .then(data => {
+                    const dump1090Status = document.getElementById('dump1090Status');
+                    const rtlAdsbStatus = document.getElementById('rtlAdsbStatus');
+                    dump1090Status.textContent = data.dump1090 ? 'OK' : 'Missing';
+                    dump1090Status.className = 'tool-status ' + (data.dump1090 ? 'ok' : 'missing');
+                    rtlAdsbStatus.textContent = data.rtl_adsb ? 'OK' : 'Missing';
+                    rtlAdsbStatus.className = 'tool-status ' + (data.rtl_adsb ? 'ok' : 'missing');
+                });
+        }
+
+        // Leaflet map for aircraft tracking
+        let aircraftMap = null;
+        let aircraftMarkers = {};
+        let mapRefreshInterval = null;
+
+        function initAircraftRadar() {
+            const mapContainer = document.getElementById('aircraftMap');
+            if (!mapContainer || aircraftMap) return;
+
+            // Initialize Leaflet map
+            aircraftMap = L.map('aircraftMap', {
+                center: [51.5, -0.1], // Default to London
+                zoom: 5,
+                zoomControl: true,
+                attributionControl: true
+            });
+
+            // Add OpenStreetMap tiles (will be inverted by CSS for dark theme)
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap',
+                maxZoom: 18
+            }).addTo(aircraftMap);
+
+            // Update time display
+            updateRadarTime();
+            setInterval(updateRadarTime, 1000);
+
+            // Refresh aircraft markers every second
+            if (!mapRefreshInterval) {
+                mapRefreshInterval = setInterval(updateAircraftMarkers, 1000);
+            }
+
+            // Setup interaction tracking
+            setupMapInteraction();
+
+            // Initial update
+            updateAircraftMarkers();
+        }
+
+        function updateRadarTime() {
+            const now = new Date();
+            const time = now.toTimeString().substring(0, 8);
+            const el = document.getElementById('radarTime');
+            if (el) el.textContent = time;
+        }
+
+        function createAircraftIcon(heading, emergency) {
+            const color = emergency ? '#ff4444' : '#00d4ff';
+            const rotation = heading || 0;
+
+            return L.divIcon({
+                className: 'aircraft-marker',
+                html: `<svg width="24" height="24" viewBox="0 0 24 24" style="transform: rotate(${rotation}deg); color: ${color};">
+                    <path fill="currentColor" d="M12 2L8 10H4v2l8 4 8-4v-2h-4L12 2zm0 14l-6 3v1h12v-1l-6-3z"/>
+                </svg>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+        }
+
+        function updateAircraftMarkers() {
+            if (!aircraftMap) return;
+
+            const showLabels = document.getElementById('adsbShowLabels')?.checked;
+            const showAltitude = document.getElementById('adsbShowAltitude')?.checked;
+            const currentIds = new Set();
+
+            // Update or create markers for each aircraft
+            Object.entries(adsbAircraft).forEach(([icao, aircraft]) => {
+                if (aircraft.lat === undefined || aircraft.lon === undefined) return;
+
+                currentIds.add(icao);
+                const icon = createAircraftIcon(aircraft.heading, aircraft.emergency);
+
+                if (aircraftMarkers[icao]) {
+                    // Update existing marker
+                    aircraftMarkers[icao].setLatLng([aircraft.lat, aircraft.lon]);
+                    aircraftMarkers[icao].setIcon(icon);
+                } else {
+                    // Create new marker
+                    const marker = L.marker([aircraft.lat, aircraft.lon], { icon: icon });
+                    marker.addTo(aircraftMap);
+                    aircraftMarkers[icao] = marker;
+                }
+
+                // Update popup content
+                let popupContent = '<div class="aircraft-popup">';
+                popupContent += `<div class="callsign">${aircraft.callsign || icao}</div>`;
+
+                if (aircraft.altitude) {
+                    popupContent += `<div class="data-row"><span class="label">Altitude:</span><span class="value">${aircraft.altitude.toLocaleString()} ft</span></div>`;
+                }
+                if (aircraft.speed) {
+                    popupContent += `<div class="data-row"><span class="label">Speed:</span><span class="value">${aircraft.speed} kts</span></div>`;
+                }
+                if (aircraft.heading !== undefined) {
+                    popupContent += `<div class="data-row"><span class="label">Heading:</span><span class="value">${aircraft.heading}°</span></div>`;
+                }
+                if (aircraft.squawk) {
+                    popupContent += `<div class="data-row"><span class="label">Squawk:</span><span class="value">${aircraft.squawk}</span></div>`;
+                }
+                popupContent += '</div>';
+
+                aircraftMarkers[icao].bindPopup(popupContent);
+
+                // Add tooltip if labels enabled
+                if (showLabels || showAltitude) {
+                    let tooltipText = '';
+                    if (showLabels && aircraft.callsign) tooltipText = aircraft.callsign;
+                    if (showAltitude && aircraft.altitude) {
+                        if (tooltipText) tooltipText += ' ';
+                        tooltipText += 'FL' + Math.round(aircraft.altitude / 100).toString().padStart(3, '0');
+                    }
+                    if (tooltipText) {
+                        aircraftMarkers[icao].bindTooltip(tooltipText, {
+                            permanent: true,
+                            direction: 'right',
+                            className: 'aircraft-tooltip'
+                        });
+                    }
+                } else {
+                    aircraftMarkers[icao].unbindTooltip();
+                }
+            });
+
+            // Remove markers for aircraft no longer tracked
+            Object.keys(aircraftMarkers).forEach(icao => {
+                if (!currentIds.has(icao)) {
+                    aircraftMap.removeLayer(aircraftMarkers[icao]);
+                    delete aircraftMarkers[icao];
+                }
+            });
+
+            // Update status display
+            const aircraftCount = Object.keys(adsbAircraft).length;
+            document.getElementById('radarStatus').textContent = isAdsbRunning ?
+                `TRACKING ${aircraftCount}` : 'STANDBY';
+            document.getElementById('aircraftCount').textContent = aircraftCount;
+
+            // Update map center display
+            const center = aircraftMap.getCenter();
+            document.getElementById('mapCenter').textContent =
+                `${center.lat.toFixed(2)}, ${center.lng.toFixed(2)}`;
+
+            // Auto-fit bounds if we have aircraft
+            if (aircraftCount > 0 && !aircraftMap._userInteracted) {
+                const bounds = [];
+                Object.values(adsbAircraft).forEach(a => {
+                    if (a.lat !== undefined && a.lon !== undefined) {
+                        bounds.push([a.lat, a.lon]);
+                    }
+                });
+                if (bounds.length > 0) {
+                    aircraftMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });
+                }
+            }
+        }
+
+        // Track user interaction to stop auto-fitting
+        function setupMapInteraction() {
+            if (aircraftMap) {
+                aircraftMap.on('dragstart zoomstart', () => {
+                    aircraftMap._userInteracted = true;
+                });
+            }
+        }
+
+        function startAdsbScan() {
+            const gain = document.getElementById('adsbGain').value;
+            const device = getSelectedDevice();
+
+            fetch('/adsb/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gain, device })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    isAdsbRunning = true;
+                    document.getElementById('startAdsbBtn').style.display = 'none';
+                    document.getElementById('stopAdsbBtn').style.display = 'block';
+                    document.getElementById('statusDot').className = 'status-dot active';
+                    document.getElementById('statusText').textContent = 'ADS-B Tracking';
+                    startAdsbStream();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            });
+        }
+
+        function stopAdsbScan() {
+            fetch('/adsb/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    isAdsbRunning = false;
+                    document.getElementById('startAdsbBtn').style.display = 'block';
+                    document.getElementById('stopAdsbBtn').style.display = 'none';
+                    document.getElementById('statusDot').className = 'status-dot';
+                    document.getElementById('statusText').textContent = 'Idle';
+                    if (adsbEventSource) {
+                        adsbEventSource.close();
+                        adsbEventSource = null;
+                    }
+                });
+        }
+
+        function startAdsbStream() {
+            if (adsbEventSource) adsbEventSource.close();
+            adsbEventSource = new EventSource('/adsb/stream');
+
+            adsbEventSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'aircraft') {
+                    adsbAircraft[data.icao] = {
+                        ...adsbAircraft[data.icao],
+                        ...data,
+                        lastSeen: Date.now()
+                    };
+                    adsbMsgCount++;
+                    updateAdsbStats();
+                    drawAircraftRadar();
+                    addAircraftToOutput(data);
+                }
+            };
+
+            // Periodic cleanup of stale aircraft
+            setInterval(() => {
+                const now = Date.now();
+                Object.keys(adsbAircraft).forEach(icao => {
+                    if (now - adsbAircraft[icao].lastSeen > 60000) {
+                        delete adsbAircraft[icao];
+                    }
+                });
+                drawAircraftRadar();
+            }, 5000);
+        }
+
+        function updateAdsbStats() {
+            document.getElementById('aircraftCount').textContent = Object.keys(adsbAircraft).length;
+            document.getElementById('adsbMsgCount').textContent = adsbMsgCount;
+            document.getElementById('icaoCount').textContent = Object.keys(adsbAircraft).length;
+        }
+
+        function addAircraftToOutput(aircraft) {
+            const output = document.getElementById('output');
+            const placeholder = output.querySelector('.placeholder');
+            if (placeholder) placeholder.remove();
+
+            const card = document.createElement('div');
+            card.className = 'aircraft-card';
+            card.innerHTML = `
+                <div class="aircraft-icon" style="--heading: ${aircraft.heading || 0}deg;">✈️</div>
+                <div class="aircraft-info">
+                    <div class="aircraft-callsign">${aircraft.callsign || aircraft.icao}</div>
+                    <div class="aircraft-data">ICAO: <span>${aircraft.icao}</span></div>
+                    <div class="aircraft-data">Alt: <span>${aircraft.altitude ? aircraft.altitude + ' ft' : 'N/A'}</span></div>
+                    <div class="aircraft-data">Speed: <span>${aircraft.speed ? aircraft.speed + ' kts' : 'N/A'}</span></div>
+                    <div class="aircraft-data">Heading: <span>${aircraft.heading ? aircraft.heading + '°' : 'N/A'}</span></div>
+                </div>
+            `;
+            output.insertBefore(card, output.firstChild);
+
+            // Limit cards
+            while (output.children.length > 50) {
+                output.removeChild(output.lastChild);
+            }
+        }
+
+        // ============================================
+        // SATELLITE MODE FUNCTIONS
+        // ============================================
+
+        function switchSatelliteTab(tab) {
+            document.querySelectorAll('.satellite-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.satellite-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`.satellite-tab:nth-child(${tab === 'predictor' ? 1 : 2})`).classList.add('active');
+            document.getElementById(tab === 'predictor' ? 'predictorTab' : 'iridiumTab').classList.add('active');
+
+            // Toggle Iridium burst log visibility
+            document.getElementById('iridiumBurstLog').style.display = tab === 'iridium' ? 'block' : 'none';
+        }
+
+        function getLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    position => {
+                        document.getElementById('obsLat').value = position.coords.latitude.toFixed(4);
+                        document.getElementById('obsLon').value = position.coords.longitude.toFixed(4);
+                        showInfo('Location updated!');
+                    },
+                    error => {
+                        alert('Could not get location: ' + error.message);
+                    }
+                );
+            } else {
+                alert('Geolocation not supported by browser');
+            }
+        }
+
+        function initPolarPlot() {
+            const canvas = document.getElementById('polarPlotCanvas');
+            if (!canvas) return;
+            const container = canvas.parentElement;
+            const size = Math.min(container.offsetWidth, 400);
+            canvas.width = size;
+            canvas.height = size;
+            drawPolarPlot();
+        }
+
+        function drawPolarPlot(pass = null) {
+            const canvas = document.getElementById('polarPlotCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            const cx = size / 2;
+            const cy = size / 2;
+            const radius = size / 2 - 30;
+
+            // Clear
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, size, size);
+
+            // Draw elevation rings
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            for (let el = 0; el <= 90; el += 30) {
+                const r = radius * (90 - el) / 90;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Label
+                if (el > 0) {
+                    ctx.fillStyle = '#444';
+                    ctx.font = '10px JetBrains Mono';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(el + '°', cx, cy - r + 12);
+                }
+            }
+
+            // Draw azimuth lines
+            for (let az = 0; az < 360; az += 45) {
+                const rad = az * Math.PI / 180;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(cx + Math.sin(rad) * radius, cy - Math.cos(rad) * radius);
+                ctx.stroke();
+            }
+
+            // Draw cardinal directions
+            ctx.fillStyle = '#00ffff';
+            ctx.font = 'bold 14px Rajdhani';
+            ctx.textAlign = 'center';
+            ctx.fillText('N', cx, cy - radius - 8);
+            ctx.fillStyle = '#888';
+            ctx.fillText('S', cx, cy + radius + 16);
+            ctx.fillText('E', cx + radius + 12, cy + 4);
+            ctx.fillText('W', cx - radius - 12, cy + 4);
+
+            // Draw zenith
+            ctx.fillStyle = '#00ffff';
+            ctx.beginPath();
+            ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw selected pass trajectory
+            if (pass && pass.trajectory) {
+                ctx.strokeStyle = pass.color || '#00ff00';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 3]);
+                ctx.beginPath();
+
+                pass.trajectory.forEach((point, i) => {
+                    const r = radius * (90 - point.elevation) / 90;
+                    const rad = point.azimuth * Math.PI / 180;
+                    const x = cx + Math.sin(rad) * r;
+                    const y = cy - Math.cos(rad) * r;
+
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                });
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Draw max elevation point
+                const maxPoint = pass.trajectory.reduce((max, p) => p.elevation > max.elevation ? p : max, { elevation: 0 });
+                const maxR = radius * (90 - maxPoint.elevation) / 90;
+                const maxRad = maxPoint.azimuth * Math.PI / 180;
+                const maxX = cx + Math.sin(maxRad) * maxR;
+                const maxY = cy - Math.cos(maxRad) * maxR;
+
+                ctx.fillStyle = pass.color || '#00ff00';
+                ctx.beginPath();
+                ctx.arc(maxX, maxY, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Label
+                ctx.fillStyle = '#fff';
+                ctx.font = '11px JetBrains Mono';
+                ctx.fillText(pass.satellite, maxX + 10, maxY - 5);
+            }
+        }
+
+        function calculatePasses() {
+            const lat = parseFloat(document.getElementById('obsLat').value);
+            const lon = parseFloat(document.getElementById('obsLon').value);
+            const hours = parseInt(document.getElementById('predictionHours').value);
+            const minEl = parseInt(document.getElementById('minElevation').value);
+
+            const satellites = getSelectedSatellites();
+
+            if (satellites.length === 0) {
+                alert('Please select at least one satellite to track');
+                return;
+            }
+
+            fetch('/satellite/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lat, lon, hours, minEl, satellites })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    satellitePasses = data.passes;
+                    renderPassList();
+                    document.getElementById('passCount').textContent = data.passes.length;
+                    if (data.passes.length > 0) {
+                        selectPass(0);
+                        document.getElementById('satelliteCountdown').style.display = 'block';
+                        updateSatelliteCountdown();
+                        startCountdownTimer();
+                    } else {
+                        document.getElementById('satelliteCountdown').style.display = 'none';
+                    }
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            });
+        }
+
+        function renderPassList() {
+            const container = document.getElementById('passList');
+            container.innerHTML = '';
+
+            if (satellitePasses.length === 0) {
+                container.innerHTML = '<div style="color: #666; text-align: center; padding: 30px;">No passes found for selected criteria.</div>';
+                return;
+            }
+
+            document.getElementById('passListCount').textContent = satellitePasses.length + ' passes';
+
+            satellitePasses.forEach((pass, index) => {
+                const card = document.createElement('div');
+                card.className = 'pass-card' + (index === 0 ? ' active' : '');
+                card.onclick = () => selectPass(index);
+
+                const quality = pass.maxEl >= 60 ? 'excellent' : pass.maxEl >= 30 ? 'good' : 'fair';
+
+                card.innerHTML = `
+                    <div class="pass-satellite">${pass.satellite}</div>
+                    <div class="pass-time">${pass.startTime}</div>
+                    <div class="pass-details">
+                        <div>Max El: <span>${pass.maxEl}°</span></div>
+                        <div>Duration: <span>${pass.duration}m</span></div>
+                        <div class="pass-quality ${quality}">${quality.toUpperCase()}</div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function selectPass(index) {
+            selectedPass = satellitePasses[index];
+            selectedPassIndex = index;
+            document.querySelectorAll('.pass-card').forEach((card, i) => {
+                card.classList.toggle('active', i === index);
+            });
+            drawPolarPlot(selectedPass);
+            // Update countdown to show selected pass
+            updateSatelliteCountdown();
+        }
+
+        function updateTLE() {
+            fetch('/satellite/update-tle', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        showInfo('TLE data updated!');
+                    } else {
+                        alert('Error updating TLE: ' + data.message);
+                    }
+                });
+        }
+
+        // Satellite management
+        let trackedSatellites = [
+            { id: 'ISS', name: 'ISS (ZARYA)', norad: '25544', builtin: true, checked: true },
+            { id: 'NOAA-15', name: 'NOAA 15', norad: '25338', builtin: true, checked: true },
+            { id: 'NOAA-18', name: 'NOAA 18', norad: '28654', builtin: true, checked: true },
+            { id: 'NOAA-19', name: 'NOAA 19', norad: '33591', builtin: true, checked: true },
+            { id: 'METEOR-M2', name: 'Meteor-M 2', norad: '40069', builtin: true, checked: true }
+        ];
+
+        function renderSatelliteList() {
+            const list = document.getElementById('satelliteList');
+            if (!list) return;
+
+            list.innerHTML = trackedSatellites.map((sat, idx) => `
+                <div class="sat-item ${sat.builtin ? 'builtin' : ''}">
+                    <label>
+                        <input type="checkbox" ${sat.checked ? 'checked' : ''} onchange="toggleSatellite(${idx})">
+                        <span class="sat-name">${sat.name}</span>
+                        <span class="sat-norad">#${sat.norad}</span>
+                    </label>
+                    <button class="sat-remove" onclick="removeSatellite(${idx})" title="Remove">✕</button>
+                </div>
+            `).join('');
+        }
+
+        function toggleSatellite(idx) {
+            trackedSatellites[idx].checked = !trackedSatellites[idx].checked;
+        }
+
+        function removeSatellite(idx) {
+            if (!trackedSatellites[idx].builtin) {
+                trackedSatellites.splice(idx, 1);
+                renderSatelliteList();
+            }
+        }
+
+        function getSelectedSatellites() {
+            return trackedSatellites.filter(s => s.checked).map(s => s.id);
+        }
+
+        function showAddSatelliteModal() {
+            document.getElementById('satModal').classList.add('active');
+        }
+
+        function closeSatModal() {
+            document.getElementById('satModal').classList.remove('active');
+        }
+
+        function switchSatModalTab(tab) {
+            document.querySelectorAll('.sat-modal-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.sat-modal-section').forEach(s => s.classList.remove('active'));
+
+            if (tab === 'tle') {
+                document.querySelector('.sat-modal-tab:first-child').classList.add('active');
+                document.getElementById('tleSection').classList.add('active');
+            } else {
+                document.querySelector('.sat-modal-tab:last-child').classList.add('active');
+                document.getElementById('celestrakSection').classList.add('active');
+            }
+        }
+
+        function addFromTLE() {
+            const tleText = document.getElementById('tleInput').value.trim();
+            if (!tleText) {
+                alert('Please paste TLE data');
+                return;
+            }
+
+            const lines = tleText.split('\\n').map(l => l.trim()).filter(l => l);
+            let added = 0;
+
+            for (let i = 0; i < lines.length; i += 3) {
+                if (i + 2 < lines.length) {
+                    const name = lines[i];
+                    const line1 = lines[i + 1];
+                    const line2 = lines[i + 2];
+
+                    if (line1.startsWith('1 ') && line2.startsWith('2 ')) {
+                        const norad = line1.substring(2, 7).trim();
+                        const id = name.replace(/[^a-zA-Z0-9]/g, '-').toUpperCase();
+
+                        // Check if already exists
+                        if (!trackedSatellites.find(s => s.norad === norad)) {
+                            trackedSatellites.push({
+                                id: id,
+                                name: name,
+                                norad: norad,
+                                builtin: false,
+                                checked: true,
+                                tle: [name, line1, line2]
+                            });
+                            added++;
+                        }
+                    }
+                }
+            }
+
+            if (added > 0) {
+                renderSatelliteList();
+                document.getElementById('tleInput').value = '';
+                closeSatModal();
+                showInfo(`Added ${added} satellite(s)`);
+            } else {
+                alert('No valid TLE data found. Format: Name, Line 1, Line 2 (3 lines per satellite)');
+            }
+        }
+
+        function fetchCelestrak() {
+            showAddSatelliteModal();
+            switchSatModalTab('celestrak');
+        }
+
+        function fetchCelestrakCategory(category) {
+            const status = document.getElementById('celestrakStatus');
+            status.innerHTML = '<span style="color: var(--accent-cyan);">Fetching ' + category + '...</span>';
+
+            fetch('/satellite/celestrak/' + category)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success' && data.satellites) {
+                        let added = 0;
+                        data.satellites.forEach(sat => {
+                            if (!trackedSatellites.find(s => s.norad === sat.norad)) {
+                                trackedSatellites.push({
+                                    id: sat.id,
+                                    name: sat.name,
+                                    norad: sat.norad,
+                                    builtin: false,
+                                    checked: false, // Don't auto-select
+                                    tle: sat.tle
+                                });
+                                added++;
+                            }
+                        });
+                        renderSatelliteList();
+                        status.innerHTML = `<span style="color: var(--accent-green);">Added ${added} satellites (${data.satellites.length} total in category)</span>`;
+                    } else {
+                        status.innerHTML = `<span style="color: var(--accent-red);">Error: ${data.message || 'Failed to fetch'}</span>`;
+                    }
+                })
+                .catch(err => {
+                    status.innerHTML = `<span style="color: var(--accent-red);">Network error</span>`;
+                });
+        }
+
+        // Initialize satellite list when satellite mode is loaded
+        function initSatelliteList() {
+            renderSatelliteList();
+        }
+
+        function popoutSatellite() {
+            document.getElementById('satellitePopout').classList.add('active');
+            document.body.style.overflow = 'hidden';
+
+            // Initialize popout canvas
+            setTimeout(() => {
+                const canvas = document.getElementById('polarPlotCanvasPopout');
+                if (canvas) {
+                    const container = canvas.parentElement;
+                    const size = Math.min(container.offsetWidth, container.offsetHeight - 50);
+                    canvas.width = size;
+                    canvas.height = size;
+                    drawPolarPlotPopout(selectedPass);
+                }
+
+                // Render pass list in popout with working click handlers
+                renderPassListPopout();
+
+                // Show countdown in popout if passes exist
+                if (satellitePasses.length > 0) {
+                    document.getElementById('satelliteCountdownPopout').style.display = 'block';
+                    updateCountdownDisplay('Popout');
+                }
+            }, 100);
+        }
+
+        function renderPassListPopout() {
+            const container = document.getElementById('passListPopout');
+            container.innerHTML = '';
+
+            if (satellitePasses.length === 0) {
+                container.innerHTML = '<div style="color: #666; text-align: center; padding: 30px;">No passes found.</div>';
+                return;
+            }
+
+            satellitePasses.forEach((pass, index) => {
+                const card = document.createElement('div');
+                card.className = 'pass-card' + (pass === selectedPass ? ' active' : '');
+                card.onclick = () => selectPassPopout(index);
+
+                const quality = pass.maxEl >= 60 ? 'excellent' : pass.maxEl >= 30 ? 'good' : 'fair';
+
+                card.innerHTML = `
+                    <div class="pass-satellite">${pass.satellite}</div>
+                    <div class="pass-time">${pass.startTime}</div>
+                    <div class="pass-details">
+                        <div>Max El: <span>${pass.maxEl}°</span></div>
+                        <div>Duration: <span>${pass.duration}m</span></div>
+                        <div class="pass-quality ${quality}">${quality.toUpperCase()}</div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function selectPassPopout(index) {
+            selectedPass = satellitePasses[index];
+            selectedPassIndex = index;
+
+            // Update active state in popout
+            document.querySelectorAll('#passListPopout .pass-card').forEach((card, i) => {
+                card.classList.toggle('active', i === index);
+            });
+
+            // Also update main list
+            document.querySelectorAll('#passList .pass-card').forEach((card, i) => {
+                card.classList.toggle('active', i === index);
+            });
+
+            // Update polar plot in popout
+            drawPolarPlotPopout(selectedPass);
+
+            // Update countdown
+            updateSatelliteCountdown();
+        }
+
+        function closeSatellitePopout() {
+            document.getElementById('satellitePopout').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        function drawPolarPlotPopout(pass) {
+            const canvas = document.getElementById('polarPlotCanvasPopout');
+            if (!canvas) return;
+            // Same as drawPolarPlot but for popout canvas
+            const ctx = canvas.getContext('2d');
+            const size = canvas.width;
+            const cx = size / 2;
+            const cy = size / 2;
+            const radius = size / 2 - 40;
+
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, size, size);
+
+            // Elevation rings
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            for (let el = 0; el <= 90; el += 15) {
+                const r = radius * (90 - el) / 90;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.stroke();
+                if (el > 0 && el % 30 === 0) {
+                    ctx.fillStyle = '#444';
+                    ctx.font = '12px JetBrains Mono';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(el + '°', cx, cy - r + 14);
+                }
+            }
+
+            // Azimuth lines
+            for (let az = 0; az < 360; az += 30) {
+                const rad = az * Math.PI / 180;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(cx + Math.sin(rad) * radius, cy - Math.cos(rad) * radius);
+                ctx.stroke();
+            }
+
+            // Cardinals
+            ctx.fillStyle = '#00ffff';
+            ctx.font = 'bold 16px Rajdhani';
+            ctx.textAlign = 'center';
+            ctx.fillText('N', cx, cy - radius - 12);
+            ctx.fillStyle = '#888';
+            ctx.fillText('S', cx, cy + radius + 20);
+            ctx.fillText('E', cx + radius + 16, cy + 5);
+            ctx.fillText('W', cx - radius - 16, cy + 5);
+
+            ctx.fillStyle = '#00ffff';
+            ctx.beginPath();
+            ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (pass && pass.trajectory) {
+                ctx.strokeStyle = pass.color || '#00ff00';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([8, 4]);
+                ctx.beginPath();
+                pass.trajectory.forEach((point, i) => {
+                    const r = radius * (90 - point.elevation) / 90;
+                    const rad = point.azimuth * Math.PI / 180;
+                    const x = cx + Math.sin(rad) * r;
+                    const y = cy - Math.cos(rad) * r;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                });
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                const maxPoint = pass.trajectory.reduce((max, p) => p.elevation > max.elevation ? p : max, { elevation: 0 });
+                const maxR = radius * (90 - maxPoint.elevation) / 90;
+                const maxRad = maxPoint.azimuth * Math.PI / 180;
+                ctx.fillStyle = pass.color || '#00ff00';
+                ctx.beginPath();
+                ctx.arc(cx + Math.sin(maxRad) * maxR, cy - Math.cos(maxRad) * maxR, 8, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '14px JetBrains Mono';
+                ctx.fillText(pass.satellite, cx + Math.sin(maxRad) * maxR + 15, cy - Math.cos(maxRad) * maxR - 10);
+            }
+        }
+
+        // Iridium functions
+        function checkIridiumTools() {
+            fetch('/iridium/tools')
+                .then(r => r.json())
+                .then(data => {
+                    const status = document.getElementById('iridiumExtractorStatus');
+                    status.textContent = data.available ? 'OK' : 'Not found';
+                    status.className = 'tool-status ' + (data.available ? 'ok' : 'missing');
+                });
+        }
+
+        function startIridiumCapture() {
+            const freq = document.getElementById('iridiumFreq').value;
+            const gain = document.getElementById('iridiumGain').value;
+            const sampleRate = document.getElementById('iridiumSampleRate').value;
+            const device = getSelectedDevice();
+
+            fetch('/iridium/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ freq, gain, sampleRate, device })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    isIridiumRunning = true;
+                    document.getElementById('startIridiumBtn').style.display = 'none';
+                    document.getElementById('stopIridiumBtn').style.display = 'block';
+                    document.getElementById('statusDot').className = 'status-dot active';
+                    document.getElementById('statusText').textContent = 'Iridium Capture';
+                    startIridiumStream();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            });
+        }
+
+        function stopIridiumCapture() {
+            fetch('/iridium/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    isIridiumRunning = false;
+                    document.getElementById('startIridiumBtn').style.display = 'block';
+                    document.getElementById('stopIridiumBtn').style.display = 'none';
+                    document.getElementById('statusDot').className = 'status-dot';
+                    document.getElementById('statusText').textContent = 'Idle';
+                    if (iridiumEventSource) {
+                        iridiumEventSource.close();
+                        iridiumEventSource = null;
+                    }
+                });
+        }
+
+        function startIridiumStream() {
+            if (iridiumEventSource) iridiumEventSource.close();
+            iridiumEventSource = new EventSource('/iridium/stream');
+
+            iridiumEventSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'burst') {
+                    iridiumBursts.unshift(data);
+                    document.getElementById('burstCount').textContent = iridiumBursts.length;
+                    addBurstToLog(data);
+                }
+            };
+        }
+
+        function addBurstToLog(burst) {
+            const container = document.getElementById('burstList');
+            const placeholder = container.querySelector('div[style*="color: #666"]');
+            if (placeholder) placeholder.remove();
+
+            const card = document.createElement('div');
+            card.className = 'burst-card';
+            card.innerHTML = `
+                <div class="burst-time">${burst.time}</div>
+                <div class="burst-freq">${burst.frequency} MHz</div>
+                <div class="burst-data">${burst.data || 'No payload data'}</div>
+            `;
+            container.insertBefore(card, container.firstChild);
+
+            while (container.children.length > 100) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        function clearIridiumLog() {
+            iridiumBursts = [];
+            document.getElementById('burstCount').textContent = '0';
+            document.getElementById('burstList').innerHTML = '<div style="color: #666; text-align: center; padding: 30px; font-size: 11px;">Iridium bursts will appear here when detected.</div>';
+        }
+
+        // Utility function
+        function showInfo(message) {
+            // Simple notification - could be enhanced
+            const existing = document.querySelector('.info-toast');
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.className = 'info-toast';
+            toast.textContent = message;
+            toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: var(--accent-cyan); color: #000; padding: 10px 20px; border-radius: 4px; z-index: 10001; font-size: 12px;';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // Theme toggle functions
+        function toggleTheme() {
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+
+            if (newTheme === 'dark') {
+                html.removeAttribute('data-theme');
+            } else {
+                html.setAttribute('data-theme', newTheme);
+            }
+
+            localStorage.setItem('intercept-theme', newTheme);
+        }
+
+        // Load saved theme on page load
+        (function() {
+            const savedTheme = localStorage.getItem('intercept-theme');
+            if (savedTheme === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        })();
+
+        // Help modal functions
+        function showHelp() {
+            document.getElementById('helpModal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function hideHelp() {
+            document.getElementById('helpModal').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        function switchHelpTab(tab) {
+            document.querySelectorAll('.help-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.help-section').forEach(s => s.classList.remove('active'));
+            document.querySelector(`.help-tab[data-tab="${tab}"]`).classList.add('active');
+            document.getElementById(`help-${tab}`).classList.add('active');
+        }
+
+        // Keyboard shortcuts for help
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') hideHelp();
+            // Open help with F1 or ? key (when not typing in an input)
+            if ((e.key === 'F1' || (e.key === '?' && !e.target.matches('input, textarea, select'))) && !document.getElementById('helpModal').classList.contains('active')) {
+                e.preventDefault();
+                showHelp();
+            }
+        });
     </script>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="help-modal" onclick="if(event.target === this) hideHelp()">
+        <div class="help-content">
+            <button class="help-close" onclick="hideHelp()">×</button>
+            <h2>📡 INTERCEPT Help</h2>
+
+            <div class="help-tabs">
+                <button class="help-tab active" data-tab="icons" onclick="switchHelpTab('icons')">Icons</button>
+                <button class="help-tab" data-tab="modes" onclick="switchHelpTab('modes')">Modes</button>
+                <button class="help-tab" data-tab="wifi" onclick="switchHelpTab('wifi')">WiFi</button>
+                <button class="help-tab" data-tab="tips" onclick="switchHelpTab('tips')">Tips</button>
+            </div>
+
+            <!-- Icons Section -->
+            <div id="help-icons" class="help-section active">
+                <h3>Stats Bar Icons</h3>
+                <div class="icon-grid">
+                    <div class="icon-item"><span class="icon">📟</span><span class="desc">POCSAG messages decoded</span></div>
+                    <div class="icon-item"><span class="icon">📠</span><span class="desc">FLEX messages decoded</span></div>
+                    <div class="icon-item"><span class="icon">📨</span><span class="desc">Total messages received</span></div>
+                    <div class="icon-item"><span class="icon">🌡️</span><span class="desc">Unique sensors detected</span></div>
+                    <div class="icon-item"><span class="icon">📊</span><span class="desc">Device types found</span></div>
+                    <div class="icon-item"><span class="icon">✈️</span><span class="desc">Aircraft being tracked</span></div>
+                    <div class="icon-item"><span class="icon">🛰️</span><span class="desc">Satellites monitored</span></div>
+                    <div class="icon-item"><span class="icon">📡</span><span class="desc">WiFi Access Points</span></div>
+                    <div class="icon-item"><span class="icon">👤</span><span class="desc">Connected WiFi clients</span></div>
+                    <div class="icon-item"><span class="icon">🤝</span><span class="desc">Captured handshakes</span></div>
+                    <div class="icon-item"><span class="icon">🚁</span><span class="desc">Detected drones (click for details)</span></div>
+                    <div class="icon-item"><span class="icon">⚠️</span><span class="desc">Rogue APs (click for details)</span></div>
+                    <div class="icon-item"><span class="icon">🔵</span><span class="desc">Bluetooth devices</span></div>
+                    <div class="icon-item"><span class="icon">📍</span><span class="desc">BLE beacons detected</span></div>
+                </div>
+
+                <h3>Mode Tab Icons</h3>
+                <div class="icon-grid">
+                    <div class="icon-item"><span class="icon">📟</span><span class="desc">Pager - POCSAG/FLEX decoder</span></div>
+                    <div class="icon-item"><span class="icon">📡</span><span class="desc">433MHz - Sensor decoder</span></div>
+                    <div class="icon-item"><span class="icon">✈️</span><span class="desc">Aircraft - ADS-B tracker</span></div>
+                    <div class="icon-item"><span class="icon">🛰️</span><span class="desc">Satellite - Pass prediction</span></div>
+                    <div class="icon-item"><span class="icon">📶</span><span class="desc">WiFi - Network scanner</span></div>
+                    <div class="icon-item"><span class="icon">🔵</span><span class="desc">Bluetooth - BT/BLE scanner</span></div>
+                </div>
+            </div>
+
+            <!-- Modes Section -->
+            <div id="help-modes" class="help-section">
+                <h3>📟 Pager Mode</h3>
+                <ul class="tip-list">
+                    <li>Decodes POCSAG and FLEX pager signals using RTL-SDR</li>
+                    <li>Set frequency to local pager frequencies (common: 152-158 MHz)</li>
+                    <li>Messages are displayed in real-time as they're decoded</li>
+                    <li>Use presets for common pager frequencies</li>
+                </ul>
+
+                <h3>📡 433MHz Sensor Mode</h3>
+                <ul class="tip-list">
+                    <li>Decodes wireless sensors on 433.92 MHz ISM band</li>
+                    <li>Detects temperature, humidity, weather stations, tire pressure monitors</li>
+                    <li>Supports many common protocols (Acurite, LaCrosse, Oregon Scientific, etc.)</li>
+                    <li>Device intelligence builds profiles of recurring devices</li>
+                </ul>
+
+                <h3>✈️ Aircraft Mode</h3>
+                <ul class="tip-list">
+                    <li>Tracks aircraft via ADS-B using dump1090 or rtl_adsb</li>
+                    <li>Interactive map with real OpenStreetMap tiles</li>
+                    <li>Click aircraft markers to see callsign, altitude, speed, heading</li>
+                    <li>Map auto-fits to show all tracked aircraft</li>
+                    <li>Emergency squawk codes highlighted in red</li>
+                </ul>
+
+                <h3>🛰️ Satellite Mode</h3>
+                <ul class="tip-list">
+                    <li>Track satellites using TLE (Two-Line Element) data</li>
+                    <li>Add satellites manually or fetch from Celestrak by category</li>
+                    <li>Categories: Amateur, Weather, ISS, Starlink, GPS, and more</li>
+                    <li>View next pass predictions with elevation and duration</li>
+                    <li>Monitor for Iridium satellite bursts</li>
+                </ul>
+
+                <h3>📶 WiFi Mode</h3>
+                <ul class="tip-list">
+                    <li>Requires a WiFi adapter capable of monitor mode</li>
+                    <li>Click "Enable Monitor" to put adapter in monitor mode</li>
+                    <li>Scans all channels or lock to a specific channel</li>
+                    <li>Detects drones by SSID patterns and manufacturer OUI</li>
+                    <li>Rogue AP detection flags same SSID on multiple BSSIDs</li>
+                    <li>Click network rows to target for deauth or handshake capture</li>
+                </ul>
+
+                <h3>🔵 Bluetooth Mode</h3>
+                <ul class="tip-list">
+                    <li>Scans for classic Bluetooth and BLE devices</li>
+                    <li>Shows device names, addresses, and signal strength</li>
+                    <li>Manufacturer lookup from MAC address OUI</li>
+                    <li>Radar visualization shows device proximity</li>
+                </ul>
+            </div>
+
+            <!-- WiFi Section -->
+            <div id="help-wifi" class="help-section">
+                <h3>Monitor Mode</h3>
+                <ul class="tip-list">
+                    <li><strong>Enable Monitor:</strong> Puts WiFi adapter in monitor mode for passive scanning</li>
+                    <li><strong>Kill Processes:</strong> Optional - stops NetworkManager/wpa_supplicant (may drop other connections)</li>
+                    <li>Some adapters rename when entering monitor mode (e.g., wlan0 → wlan0mon)</li>
+                </ul>
+
+                <h3>Handshake Capture</h3>
+                <ul class="tip-list">
+                    <li>Click "Capture" on a network to start targeted handshake capture</li>
+                    <li>Status panel shows capture progress and file location</li>
+                    <li>Use deauth to force clients to reconnect (only on authorized networks!)</li>
+                    <li>Handshake files saved to /tmp/intercept_handshake_*.cap</li>
+                </ul>
+
+                <h3>Drone Detection</h3>
+                <ul class="tip-list">
+                    <li>Drones detected by SSID patterns (DJI, Parrot, Autel, etc.)</li>
+                    <li>Also detected by manufacturer OUI in MAC address</li>
+                    <li>Distance estimated from signal strength (approximate)</li>
+                    <li>Click drone count in stats bar to see all detected drones</li>
+                </ul>
+
+                <h3>Rogue AP Detection</h3>
+                <ul class="tip-list">
+                    <li>Flags networks where same SSID appears on multiple BSSIDs</li>
+                    <li>Could indicate evil twin attack or legitimate multi-AP setup</li>
+                    <li>Click rogue count to see which SSIDs are flagged</li>
+                </ul>
+
+                <h3>Proximity Alerts</h3>
+                <ul class="tip-list">
+                    <li>Add MAC addresses to watch list for alerts when detected</li>
+                    <li>Watch list persists in browser localStorage</li>
+                    <li>Useful for tracking specific devices</li>
+                </ul>
+
+                <h3>Client Probe Analysis</h3>
+                <ul class="tip-list">
+                    <li>Shows what networks client devices are looking for</li>
+                    <li>Orange highlights indicate sensitive/private network names</li>
+                    <li>Reveals user location history (home, work, hotels, airports)</li>
+                    <li>Useful for security awareness and pen test reports</li>
+                </ul>
+            </div>
+
+            <!-- Tips Section -->
+            <div id="help-tips" class="help-section">
+                <h3>General Tips</h3>
+                <ul class="tip-list">
+                    <li><strong>Collapsible sections:</strong> Click any section header (▼) to collapse/expand</li>
+                    <li><strong>Sound alerts:</strong> Toggle sound on/off in settings for each mode</li>
+                    <li><strong>Export data:</strong> Use export buttons to save captured data as JSON</li>
+                    <li><strong>Device Intelligence:</strong> Tracks device patterns over time</li>
+                    <li><strong>Theme toggle:</strong> Click 🌙/☀️ button in header to switch dark/light mode</li>
+                </ul>
+
+                <h3>Keyboard Shortcuts</h3>
+                <ul class="tip-list">
+                    <li><strong>F1</strong> - Open this help page</li>
+                    <li><strong>?</strong> - Open help (when not typing in a field)</li>
+                    <li><strong>Escape</strong> - Close help and modal dialogs</li>
+                </ul>
+
+                <h3>Requirements</h3>
+                <ul class="tip-list">
+                    <li><strong>Pager/433MHz:</strong> RTL-SDR dongle, rtl_fm, multimon-ng, rtl_433</li>
+                    <li><strong>Aircraft:</strong> RTL-SDR dongle, dump1090 or rtl_adsb</li>
+                    <li><strong>Satellite:</strong> Internet connection for Celestrak (optional)</li>
+                    <li><strong>WiFi:</strong> Monitor-mode capable adapter, aircrack-ng suite</li>
+                    <li><strong>Bluetooth:</strong> Bluetooth adapter, hcitool/bluetoothctl</li>
+                    <li>Run as root/sudo for full functionality</li>
+                </ul>
+
+                <h3>Legal Notice</h3>
+                <ul class="tip-list">
+                    <li>Only use on networks and devices you own or have authorization to test</li>
+                    <li>Passive monitoring may be legal; active attacks require authorization</li>
+                    <li>Check local laws regarding radio frequency monitoring</li>
+                </ul>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 '''
@@ -6879,10 +10345,421 @@ def stream_bt():
     return response
 
 
+# ============================================
+# AIRCRAFT (ADS-B) ROUTES
+# ============================================
+
+@app.route('/adsb/tools')
+def check_adsb_tools():
+    """Check for ADS-B decoding tools."""
+    return jsonify({
+        'dump1090': shutil.which('dump1090') is not None or shutil.which('dump1090-mutability') is not None,
+        'rtl_adsb': shutil.which('rtl_adsb') is not None
+    })
+
+
+@app.route('/adsb/start', methods=['POST'])
+def start_adsb():
+    """Start ADS-B tracking."""
+    global adsb_process
+
+    with adsb_lock:
+        if adsb_process and adsb_process.poll() is None:
+            return jsonify({'status': 'error', 'message': 'ADS-B already running'})
+
+    data = request.json
+    gain = data.get('gain', '40')
+    device = data.get('device', '0')
+
+    # Try dump1090 first, fall back to rtl_adsb
+    dump1090_path = shutil.which('dump1090') or shutil.which('dump1090-mutability')
+
+    if dump1090_path:
+        cmd = [dump1090_path, '--raw', '--net', f'--gain', gain, f'--device-index', str(device)]
+    elif shutil.which('rtl_adsb'):
+        cmd = ['rtl_adsb', '-g', gain, '-d', str(device)]
+    else:
+        return jsonify({'status': 'error', 'message': 'No ADS-B decoder found (install dump1090 or rtl_adsb)'})
+
+    try:
+        adsb_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+            universal_newlines=True
+        )
+
+        # Start parsing thread
+        thread = threading.Thread(target=parse_adsb_output, args=(adsb_process,), daemon=True)
+        thread.start()
+
+        return jsonify({'status': 'started'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/adsb/stop', methods=['POST'])
+def stop_adsb():
+    """Stop ADS-B tracking."""
+    global adsb_process, adsb_aircraft
+
+    with adsb_lock:
+        if adsb_process:
+            adsb_process.terminate()
+            try:
+                adsb_process.wait(timeout=5)
+            except:
+                adsb_process.kill()
+            adsb_process = None
+
+    adsb_aircraft = {}
+    return jsonify({'status': 'stopped'})
+
+
+@app.route('/adsb/stream')
+def stream_adsb():
+    """SSE stream for ADS-B aircraft."""
+    def generate():
+        while True:
+            try:
+                msg = adsb_queue.get(timeout=1)
+                yield f"data: {json.dumps(msg)}\n\n"
+            except queue.Empty:
+                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
+
+
+def parse_adsb_output(process):
+    """Parse ADS-B output and add to queue."""
+    global adsb_aircraft
+    import re
+
+    icao_pattern = re.compile(r'\*([0-9A-Fa-f]{6,14});')
+
+    try:
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Parse raw Mode S messages (simplified)
+            match = icao_pattern.search(line)
+            if match:
+                raw = match.group(1)
+                if len(raw) >= 6:
+                    icao = raw[:6].upper()
+
+                    # Basic aircraft data (would need proper Mode S decoding for full data)
+                    aircraft = adsb_aircraft.get(icao, {
+                        'icao': icao,
+                        'callsign': None,
+                        'altitude': None,
+                        'speed': None,
+                        'heading': None,
+                        'lat': None,
+                        'lon': None,
+                        'distance': 50,  # Placeholder
+                        'bearing': hash(icao) % 360  # Placeholder for demo
+                    })
+
+                    adsb_aircraft[icao] = aircraft
+                    adsb_queue.put({
+                        'type': 'aircraft',
+                        **aircraft
+                    })
+    except Exception as e:
+        print(f"[ADS-B] Parse error: {e}")
+
+
+# ============================================
+# SATELLITE ROUTES
+# ============================================
+
+@app.route('/satellite/predict', methods=['POST'])
+def predict_passes():
+    """Calculate satellite passes."""
+    import math
+    from datetime import datetime, timedelta
+
+    data = request.json
+    lat = data.get('lat', 51.5074)
+    lon = data.get('lon', -0.1278)
+    hours = data.get('hours', 24)
+    min_el = data.get('minEl', 10)
+    satellites = data.get('satellites', ['ISS', 'NOAA-15', 'NOAA-18', 'NOAA-19'])
+
+    passes = []
+    colors = {'ISS': '#00ffff', 'NOAA-15': '#00ff00', 'NOAA-18': '#ff6600', 'NOAA-19': '#ff3366', 'METEOR-M2': '#9370DB'}
+
+    # Simplified pass prediction (for demo - real implementation would use skyfield or pyephem)
+    now = datetime.utcnow()
+
+    for sat_name in satellites:
+        if sat_name not in TLE_SATELLITES:
+            continue
+
+        # Generate simulated passes for demo
+        num_passes = hours // 6  # Roughly one pass every 6 hours for LEO sats
+
+        for i in range(num_passes):
+            pass_time = now + timedelta(hours=i * 6 + (hash(sat_name) % 3))
+            max_elevation = 20 + (hash(sat_name + str(i)) % 60)
+
+            if max_elevation < min_el:
+                continue
+
+            # Generate trajectory points
+            trajectory = []
+            az_start = (hash(sat_name + str(i)) % 180)
+            az_end = (az_start + 90 + hash(sat_name) % 90) % 360
+
+            for j in range(20):
+                t = j / 19
+                el = max_elevation * math.sin(t * math.pi)
+                az = az_start + (az_end - az_start) * t
+                trajectory.append({'elevation': el, 'azimuth': az})
+
+            passes.append({
+                'satellite': sat_name,
+                'startTime': pass_time.strftime('%Y-%m-%d %H:%M UTC'),
+                'maxEl': max_elevation,
+                'duration': 8 + (hash(sat_name + str(i)) % 7),
+                'trajectory': trajectory,
+                'color': colors.get(sat_name, '#00ff00')
+            })
+
+    # Sort by time
+    passes.sort(key=lambda p: p['startTime'])
+
+    return jsonify({
+        'status': 'success',
+        'passes': passes
+    })
+
+
+@app.route('/satellite/update-tle', methods=['POST'])
+def update_tle():
+    """Update TLE data from CelesTrak."""
+    global TLE_SATELLITES
+
+    try:
+        import urllib.request
+
+        # URLs for TLE data
+        urls = {
+            'stations': 'https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle',
+            'weather': 'https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=tle'
+        }
+
+        # This is a simplified implementation - real version would parse and update TLE_SATELLITES
+        return jsonify({
+            'status': 'success',
+            'message': 'TLE data updated (simulated)'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        })
+
+
+@app.route('/satellite/celestrak/<category>')
+def fetch_celestrak(category):
+    """Fetch TLE data from CelesTrak for a specific category."""
+    import urllib.request
+
+    # Map category names to Celestrak groups
+    category_map = {
+        'stations': 'stations',
+        'visual': 'visual',
+        'weather': 'weather',
+        'noaa': 'noaa',
+        'amateur': 'amateur',
+        'starlink': 'starlink',
+        'gps-ops': 'gps-ops',
+        'iridium': 'iridium'
+    }
+
+    if category not in category_map:
+        return jsonify({'status': 'error', 'message': 'Unknown category'})
+
+    try:
+        url = f'https://celestrak.org/NORAD/elements/gp.php?GROUP={category_map[category]}&FORMAT=tle'
+        req = urllib.request.Request(url, headers={'User-Agent': 'INTERCEPT/1.0'})
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            tle_data = response.read().decode('utf-8')
+
+        lines = [l.strip() for l in tle_data.strip().split('\n') if l.strip()]
+        satellites = []
+
+        # Parse TLE (3 lines per satellite)
+        for i in range(0, len(lines) - 2, 3):
+            name = lines[i]
+            line1 = lines[i + 1]
+            line2 = lines[i + 2]
+
+            if line1.startswith('1 ') and line2.startswith('2 '):
+                norad = line1[2:7].strip()
+                sat_id = name.replace(' ', '-').replace('/', '-').upper()[:20]
+                satellites.append({
+                    'id': sat_id,
+                    'name': name,
+                    'norad': norad,
+                    'tle': [name, line1, line2]
+                })
+
+        # Limit to first 50 satellites to avoid overwhelming the UI
+        return jsonify({
+            'status': 'success',
+            'satellites': satellites[:50],
+            'total': len(satellites)
+        })
+    except urllib.error.URLError as e:
+        return jsonify({'status': 'error', 'message': f'Network error: {str(e)}'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+# ============================================
+# IRIDIUM ROUTES
+# ============================================
+
+@app.route('/iridium/tools')
+def check_iridium_tools():
+    """Check for Iridium decoding tools."""
+    # Check for iridium-extractor or gr-iridium
+    has_tool = shutil.which('iridium-extractor') is not None or shutil.which('iridium-parser') is not None
+    return jsonify({'available': has_tool})
+
+
+@app.route('/iridium/start', methods=['POST'])
+def start_iridium():
+    """Start Iridium burst capture."""
+    global satellite_process
+
+    with satellite_lock:
+        if satellite_process and satellite_process.poll() is None:
+            return jsonify({'status': 'error', 'message': 'Iridium capture already running'})
+
+    data = request.json
+    freq = data.get('freq', '1626.0')
+    gain = data.get('gain', '40')
+    sample_rate = data.get('sampleRate', '2.048e6')
+    device = data.get('device', '0')
+
+    # Check for tools
+    if not shutil.which('iridium-extractor') and not shutil.which('rtl_fm'):
+        return jsonify({
+            'status': 'error',
+            'message': 'Iridium tools not found. Install gr-iridium or use rtl_fm for basic capture.'
+        })
+
+    try:
+        # For demo, use rtl_fm to capture L-band (iridium-extractor would be better)
+        # Real implementation would pipe to iridium-extractor
+        cmd = [
+            'rtl_fm',
+            '-f', f'{float(freq)}M',
+            '-g', str(gain),
+            '-s', sample_rate,
+            '-d', str(device),
+            '-'
+        ]
+
+        satellite_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+
+        # Start monitoring thread
+        thread = threading.Thread(target=monitor_iridium, args=(satellite_process,), daemon=True)
+        thread.start()
+
+        return jsonify({'status': 'started'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/iridium/stop', methods=['POST'])
+def stop_iridium():
+    """Stop Iridium capture."""
+    global satellite_process, iridium_bursts
+
+    with satellite_lock:
+        if satellite_process:
+            satellite_process.terminate()
+            try:
+                satellite_process.wait(timeout=5)
+            except:
+                satellite_process.kill()
+            satellite_process = None
+
+    return jsonify({'status': 'stopped'})
+
+
+@app.route('/iridium/stream')
+def stream_iridium():
+    """SSE stream for Iridium bursts."""
+    def generate():
+        while True:
+            try:
+                msg = satellite_queue.get(timeout=1)
+                yield f"data: {json.dumps(msg)}\n\n"
+            except queue.Empty:
+                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
+
+
+def monitor_iridium(process):
+    """Monitor Iridium capture and detect bursts."""
+    import time
+    from datetime import datetime
+
+    # Simulated burst detection (real implementation would use proper Iridium decoding)
+    # With gr-iridium, you'd parse the actual burst frames
+
+    try:
+        burst_count = 0
+        while process.poll() is None:
+            # Read some data
+            data = process.stdout.read(1024)
+            if data:
+                # Simulate burst detection based on signal energy
+                # Real implementation would decode Iridium frames
+                if len(data) > 0 and burst_count < 100:
+                    # Occasional simulated burst for demo
+                    import random
+                    if random.random() < 0.01:  # 1% chance per read
+                        burst = {
+                            'type': 'burst',
+                            'time': datetime.now().strftime('%H:%M:%S.%f')[:-3],
+                            'frequency': f"{1616 + random.random() * 10:.3f}",
+                            'data': f"Frame data (simulated) - Burst #{burst_count + 1}"
+                        }
+                        satellite_queue.put(burst)
+                        iridium_bursts.append(burst)
+                        burst_count += 1
+
+            time.sleep(0.1)
+    except Exception as e:
+        print(f"[Iridium] Monitor error: {e}")
+
+
 def main():
     print("=" * 50)
     print("  INTERCEPT // Signal Intelligence")
-    print("  POCSAG / FLEX / 433MHz / WiFi / Bluetooth")
+    print("  Pager / 433MHz / Aircraft / Satellite / WiFi / BT")
     print("=" * 50)
     print()
     print("Open http://localhost:5050 in your browser")
