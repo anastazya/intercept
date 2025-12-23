@@ -158,7 +158,7 @@ TOOL_DEPENDENCIES = {
                 'required': False,
                 'description': 'Mode S / ADS-B decoder (preferred)',
                 'install': {
-                    'apt': 'sudo apt install dump1090-mutability',
+                    'apt': 'sudo apt install dump1090-mutability (or build dump1090-fa from source)',
                     'brew': 'brew install dump1090-mutability',
                     'manual': 'https://github.com/flightaware/dump1090'
                 },

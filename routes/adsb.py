@@ -154,7 +154,7 @@ def parse_sbs_stream(service_addr):
 def check_adsb_tools():
     """Check for ADS-B decoding tools."""
     return jsonify({
-        'dump1090': shutil.which('dump1090') is not None or shutil.which('dump1090-mutability') is not None,
+        'dump1090': shutil.which('dump1090') is not None or shutil.which('dump1090-mutability') is not None or shutil.which('dump1090-fa') is not None,
         'rtl_adsb': shutil.which('rtl_adsb') is not None
     })
 
@@ -174,7 +174,7 @@ def start_adsb():
     gain = data.get('gain', '40')
     device = data.get('device', '0')
 
-    dump1090_path = shutil.which('dump1090') or shutil.which('dump1090-mutability')
+    dump1090_path = shutil.which('dump1090') or shutil.which('dump1090-mutability') or shutil.which('dump1090-fa')
 
     if not dump1090_path:
         return jsonify({'status': 'error', 'message': 'dump1090 not found.'})
