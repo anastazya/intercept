@@ -1367,11 +1367,16 @@
             let targetSatellite = selectedSatellite;
             let satColor = satellites[selectedSatellite]?.color || '#00d4ff';
 
+            console.log('updateRealTimePositions - selectedPass:', selectedPass, 'passes.length:', passes.length);
+
             if (selectedPass !== null && passes[selectedPass]) {
                 const pass = passes[selectedPass];
                 // Use the satellite name from the pass (backend accepts names or NORAD IDs)
                 targetSatellite = pass.satellite;
                 satColor = pass.color || satColor;
+                console.log('Using pass satellite:', targetSatellite, 'color:', satColor);
+            } else {
+                console.log('No pass selected, using dropdown satellite:', targetSatellite);
             }
 
             try {
@@ -1387,8 +1392,10 @@
                 });
 
                 const data = await response.json();
+                console.log('Position response:', data);
                 if (data.status === 'success' && data.positions.length > 0) {
                     const pos = data.positions[0];
+                    console.log('Position data:', pos.satellite, 'lat:', pos.lat, 'lon:', pos.lon, 'has track:', !!pos.track, 'track length:', pos.track?.length);
 
                     // Update telemetry
                     document.getElementById('telLat').textContent = pos.lat.toFixed(4) + '°';
@@ -1402,6 +1409,7 @@
                     document.getElementById('statVisible').textContent = pos.elevation > 0 ? '1' : '0';
 
                     // Update satellite marker on map
+                    console.log('Updating map, groundMap exists:', !!groundMap);
                     if (groundMap) {
                         if (satMarker) groundMap.removeLayer(satMarker);
 
