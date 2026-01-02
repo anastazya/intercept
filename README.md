@@ -79,6 +79,8 @@ This started as a personal project and was released to help more people get into
 
 AI is no different from using a power tool instead of a hand screwdriver: it helps you work faster, not care less. What matters is that the software works, solves a real problem, and is open for others to learn from and improve.
 
+---
+
 ## Features
 
 ### 📟 Pager Decoding
@@ -480,6 +482,7 @@ By using INTERCEPT, you acknowledge that:
 - The developers assume no liability for misuse of this software
 
 A disclaimer must be accepted when first launching the application.
+
 
 
 
