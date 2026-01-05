@@ -81,7 +81,7 @@ install_python_deps() {
     if [ -n "$VIRTUAL_ENV" ]; then
         echo "Using virtual environment: $VIRTUAL_ENV"
         pip install -r requirements.txt
-    elif [ -d "venv" ]; then
+    elif [ -f "venv/bin/activate" ]; then
         echo "Found existing venv, activating..."
         source venv/bin/activate
         pip install -r requirements.txt
@@ -97,7 +97,22 @@ install_python_deps() {
         echo ""
         echo -e "${YELLOW}System Python is externally managed (PEP 668).${NC}"
         echo "Creating virtual environment..."
-        python3 -m venv venv
+
+        # Remove any incomplete venv directory from previous failed attempts
+        if [ -d "venv" ] && [ ! -f "venv/bin/activate" ]; then
+            echo "Removing incomplete venv directory..."
+            rm -rf venv
+        fi
+
+        if ! python3 -m venv venv; then
+            echo -e "${RED}Error: Failed to create virtual environment${NC}"
+            echo ""
+            echo "On Debian/Ubuntu, install the venv module with:"
+            echo "  sudo apt install python3-venv"
+            echo ""
+            echo "Then run this setup script again."
+            exit 1
+        fi
         source venv/bin/activate
         pip install -r requirements.txt
         echo ""
