@@ -1272,6 +1272,13 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Selected WiFi Device Info -->
+                    <div class="wifi-visual-panel" style="grid-column: span 2;">
+                        <h5>📋 Selected Device</h5>
+                        <div id="wifiSelectedDevice" style="font-size: 11px; min-height: 100px;">
+                            <div style="color: var(--text-dim); padding: 20px; text-align: center;">Click a network or client to view details</div>
+                        </div>
+                    </div>
                     <!-- Network Relationship Graph -->
                     <div class="wifi-visual-panel network-graph-container" style="grid-column: span 2;">
                         <h4>🕸️ Network Topology</h4>
@@ -3731,6 +3738,8 @@
         let activeCapture = null;  // {bssid, channel, file, startTime, pollInterval}
         let watchMacs = JSON.parse(localStorage.getItem('watchMacs') || '[]');
         let alertedMacs = new Set();  // Prevent duplicate alerts per session
+        let selectedWifiDevice = null;  // Selected network or client for details view
+        let selectedWifiType = null;  // 'network' or 'client'
 
         // 5GHz channel mapping for the graph
         const channels5g = ['36', '40', '44', '48', '52', '56', '60', '64', '100', '149', '153', '157', '161', '165'];
@@ -4686,6 +4695,9 @@
                 updateChannelGraph();
                 updateChannel5gGraph();
 
+                // Update selected device panel
+                updateWifiSelectedDevice();
+
                 // Update probe analysis (throttled)
                 if (clientsToProcess.length > 0) {
                     scheduleProbeAnalysisUpdate();
@@ -4878,7 +4890,7 @@
                 }).join(' ');
 
                 html += `
-                    <div style="border-left: 2px solid var(--accent-cyan); padding-left: 8px;">
+                    <div style="border-left: 2px solid var(--accent-cyan); padding-left: 8px; cursor: pointer;" onclick="selectWifiDevice('${escapeAttr(client.mac)}', 'client')" title="Click for details">
                         <div style="display: flex; align-items: center; gap: 5px; margin-bottom: 3px;">
                             <span style="color: var(--accent-cyan); font-family: monospace; font-size: 10px;">${escapeHtml(client.mac)}</span>
                             ${vendorBadge}
@@ -4893,6 +4905,116 @@
 
             html += '</div>';
             list.innerHTML = html;
+        }
+
+        // Select a WiFi network or client for detailed view
+        function selectWifiDevice(id, type) {
+            selectedWifiDevice = id;
+            selectedWifiType = type;
+            updateWifiSelectedDevice();
+        }
+
+        // Update the selected WiFi device panel
+        function updateWifiSelectedDevice() {
+            const panel = document.getElementById('wifiSelectedDevice');
+            if (!panel) return;
+
+            if (!selectedWifiDevice) {
+                panel.innerHTML = '<div style="color: var(--text-dim); padding: 20px; text-align: center;">Click a network or client to view details</div>';
+                return;
+            }
+
+            if (selectedWifiType === 'network') {
+                const net = wifiNetworks[selectedWifiDevice];
+                if (!net) {
+                    panel.innerHTML = '<div style="color: var(--text-dim); padding: 20px; text-align: center;">Network no longer visible</div>';
+                    return;
+                }
+
+                const power = parseInt(net.power) || -100;
+                const signalPercent = Math.max(0, Math.min(100, (power + 100) * 2));
+                const signalColor = power >= -50 ? 'var(--accent-green)' : power >= -70 ? 'var(--accent-orange)' : 'var(--accent-red)';
+
+                panel.innerHTML = `
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div style="grid-column: span 2; text-align: center; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);">
+                            <div style="font-size: 18px; color: var(--accent-cyan); font-weight: bold;">${escapeHtml(net.essid || '[Hidden]')}</div>
+                            <div style="font-size: 10px; color: var(--text-muted);">${escapeHtml(net.bssid)}</div>
+                        </div>
+                        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">SIGNAL</div>
+                            <div style="color: ${signalColor}; font-size: 16px; font-weight: bold;">${power} dBm</div>
+                            <div style="background: var(--bg-tertiary); height: 4px; border-radius: 2px; margin-top: 4px;">
+                                <div style="background: ${signalColor}; height: 100%; width: ${signalPercent}%; border-radius: 2px;"></div>
+                            </div>
+                        </div>
+                        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">CHANNEL</div>
+                            <div style="color: var(--accent-cyan); font-size: 16px; font-weight: bold;">${net.channel}</div>
+                        </div>
+                        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">SECURITY</div>
+                            <div style="color: ${(net.privacy || '').includes('WPA3') ? 'var(--accent-green)' : (net.privacy || '').includes('WPA') ? 'var(--accent-orange)' : 'var(--accent-red)'};">${escapeHtml(net.privacy || 'Unknown')}</div>
+                        </div>
+                        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">BEACONS</div>
+                            <div style="color: var(--text-secondary);">${net.beacons || 0}</div>
+                        </div>
+                        <div style="grid-column: span 2; display: flex; gap: 8px; margin-top: 8px;">
+                            <button class="preset-btn" onclick="targetNetwork('${escapeAttr(net.bssid)}', '${escapeAttr(net.channel)}')" style="flex: 1;">Target</button>
+                            <button class="preset-btn" onclick="captureHandshake('${escapeAttr(net.bssid)}', '${escapeAttr(net.channel)}')" style="flex: 1; border-color: var(--accent-orange); color: var(--accent-orange);">Handshake</button>
+                        </div>
+                    </div>
+                `;
+            } else if (selectedWifiType === 'client') {
+                const client = wifiClients[selectedWifiDevice];
+                if (!client) {
+                    panel.innerHTML = '<div style="color: var(--text-dim); padding: 20px; text-align: center;">Client no longer visible</div>';
+                    return;
+                }
+
+                const power = parseInt(client.power) || -100;
+                const signalPercent = Math.max(0, Math.min(100, (power + 100) * 2));
+                const signalColor = power >= -50 ? 'var(--accent-green)' : power >= -70 ? 'var(--accent-orange)' : 'var(--accent-red)';
+                const probes = (client.probes || '').split(',').map(p => p.trim()).filter(p => p);
+                const associatedNet = client.bssid && wifiNetworks[client.bssid];
+
+                panel.innerHTML = `
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div style="grid-column: span 2; text-align: center; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);">
+                            <div style="font-size: 14px; color: var(--accent-orange); font-weight: bold;">CLIENT DEVICE</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">${escapeHtml(client.mac)}</div>
+                            ${client.vendor ? `<div style="font-size: 10px; color: var(--text-muted);">${escapeHtml(client.vendor)}</div>` : ''}
+                        </div>
+                        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">SIGNAL</div>
+                            <div style="color: ${signalColor}; font-size: 16px; font-weight: bold;">${power} dBm</div>
+                            <div style="background: var(--bg-tertiary); height: 4px; border-radius: 2px; margin-top: 4px;">
+                                <div style="background: ${signalColor}; height: 100%; width: ${signalPercent}%; border-radius: 2px;"></div>
+                            </div>
+                        </div>
+                        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">PACKETS</div>
+                            <div style="color: var(--text-secondary);">${client.packets || 0}</div>
+                        </div>
+                        ${associatedNet ? `
+                        <div style="grid-column: span 2; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">CONNECTED TO</div>
+                            <div style="color: var(--accent-cyan);">${escapeHtml(associatedNet.essid || associatedNet.bssid)}</div>
+                        </div>
+                        ` : ''}
+                        ${probes.length > 0 ? `
+                        <div style="grid-column: span 2; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                            <div style="color: var(--text-dim); font-size: 9px;">PROBING FOR</div>
+                            <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;">
+                                ${probes.slice(0, 5).map(p => `<span style="background: var(--accent-orange); color: #000; padding: 2px 6px; border-radius: 3px; font-size: 10px;">${escapeHtml(p)}</span>`).join('')}
+                                ${probes.length > 5 ? `<span style="color: var(--text-muted);">+${probes.length - 5} more</span>` : ''}
+                            </div>
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
         }
 
         // Add WiFi network card to output
@@ -4911,11 +5033,18 @@
                 card.style.borderLeftColor = net.privacy.includes('WPA') ? 'var(--accent-orange)' :
                                              net.privacy.includes('WEP') ? 'var(--accent-red)' :
                                              'var(--accent-green)';
+                card.style.cursor = 'pointer';
+                card.onclick = () => selectWifiDevice(net.bssid, 'network');
                 output.insertBefore(card, output.firstChild);
             }
 
-            const signalStrength = parseInt(net.power) || -100;
-            const signalBars = Math.max(0, Math.min(5, Math.floor((signalStrength + 100) / 15)));
+            // Handle signal strength - airodump returns -1 when not measured
+            let signalStrength = parseInt(net.power);
+            if (isNaN(signalStrength) || signalStrength === -1) {
+                signalStrength = null;  // No reading available
+            }
+            const signalBars = signalStrength !== null ? Math.max(0, Math.min(5, Math.floor((signalStrength + 100) / 15))) : 0;
+            const signalDisplay = signalStrength !== null ? `${signalStrength} dBm` : 'N/A';
 
             const wpsEnabled = net.wps === '1' || net.wps === 'Yes' || (net.privacy || '').includes('WPS');
             const wpsHtml = wpsEnabled ? '<span class="wps-enabled">WPS</span>' : '';
@@ -4936,7 +5065,7 @@
                     </div>
                     <div class="data-item">
                         <div class="data-label">Signal</div>
-                        <div class="data-value">${net.power} dBm ${'█'.repeat(signalBars)}${'░'.repeat(5-signalBars)}</div>
+                        <div class="data-value">${signalDisplay} ${'█'.repeat(signalBars)}${'░'.repeat(5-signalBars)}</div>
                     </div>
                     <div class="data-item">
                         <div class="data-label">Beacons</div>
