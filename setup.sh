@@ -287,7 +287,18 @@ install_macos_packages() {
 # ----------------------------
 # Debian/Ubuntu install (APT)
 # ----------------------------
-apt_install() { $SUDO apt-get install -y --no-install-recommends "$@" >/dev/null; }
+apt_install() {
+  local pkgs="$*"
+  local output
+  local ret=0
+  output=$($SUDO apt-get install -y --no-install-recommends "$@" 2>&1) || ret=$?
+  if [[ $ret -ne 0 ]]; then
+    fail "Failed to install: $pkgs"
+    echo "$output" | tail -10
+    fail "Try running: sudo apt-get update && sudo apt-get install -y $pkgs"
+    return 1
+  fi
+}
 
 apt_try_install_any() {
   local p
