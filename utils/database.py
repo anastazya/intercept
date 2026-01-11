@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from werkzeug.security import generate_password_hash
+from config import ADMIN_USERNAME, ADMIN_PASSWORD
 
 logger = logging.getLogger('intercept.database')
 
@@ -99,6 +101,31 @@ def init_db() -> None:
                 UNIQUE(wifi_mac, bt_mac)
             )
         ''')
+
+        # Users table for authentication
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor = conn.execute('SELECT COUNT(*) FROM users')
+        if cursor.fetchone()[0] == 0:
+            from config import ADMIN_USERNAME, ADMIN_PASSWORD
+            
+            logger.info(f"Creating default admin user: {ADMIN_USERNAME}")
+            
+            # Password hashing
+            hashed_pw = generate_password_hash(ADMIN_PASSWORD)
+            
+            conn.execute('''
+                INSERT INTO users (username, password_hash, role)
+                VALUES (?, ?, ?)
+            ''', (ADMIN_USERNAME, hashed_pw, 'admin'))
 
         logger.info("Database initialized successfully")
 

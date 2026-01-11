@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 import site
 
+from utils.database import get_db
+
 # Ensure user site-packages is available (may be disabled when running as root/sudo)
 if not site.ENABLE_USER_SITE:
     user_site = site.getusersitepackages()
@@ -24,7 +26,7 @@ import subprocess
 from typing import Any
 
 from flask import Flask, render_template, jsonify, send_file, Response, request,redirect, url_for, flash, session
-
+from werkzeug.security import check_password_hash
 from config import VERSION
 from utils.dependencies import check_tool, check_all_dependencies, TOOL_DEPENDENCIES
 from utils.process import cleanup_stale_processes
@@ -36,11 +38,11 @@ from utils.constants import (
     MAX_BT_DEVICE_AGE_SECONDS,
     QUEUE_MAX_SIZE,
 )
-
+import logging
 # Track application start time for uptime calculation
 import time as _time
 _app_start_time = _time.time()
-
+logger = logging.getLogger('intercept.database')
 
 # Create Flask app
 app = Flask(__name__)
@@ -162,10 +164,25 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        if username == "admin" and password == "intercept2026":
+        # 1. Conectar a la DB y buscar al usuario
+        with get_db() as conn:
+            cursor = conn.execute(
+                'SELECT password_hash, role FROM users WHERE username = ?', 
+                (username,)
+            )
+            user = cursor.fetchone()
+
+        # 2. Verificar si el usuario existe y la contraseña es correcta
+        if user and check_password_hash(user['password_hash'], password):
+            # Guardamos datos en la sesión
             session['logged_in'] = True
+            session['username'] = username
+            session['role'] = user['role']
+            
+            logger.info(f"User '{username}' logged in successfully.")
             return redirect(url_for('index'))
         else:
+            logger.warning(f"Failed login attempt for username: {username}")
             flash("ACCESS DENIED: INVALID CREDENTIALS", "error")
             
     return render_template('login.html', version=VERSION)

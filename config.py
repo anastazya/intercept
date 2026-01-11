@@ -81,6 +81,9 @@ SATELLITE_UPDATE_INTERVAL = _get_env_int('SATELLITE_UPDATE_INTERVAL', 30)
 SATELLITE_TRAJECTORY_POINTS = _get_env_int('SATELLITE_TRAJECTORY_POINTS', 30)
 SATELLITE_ORBIT_MINUTES = _get_env_int('SATELLITE_ORBIT_MINUTES', 45)
 
+# Admin credentials
+ADMIN_USERNAME = _get_env('ADMIN_USERNAME', 'admin')
+ADMIN_PASSWORD = _get_env('ADMIN_PASSWORD', 'intercept')
 
 def configure_logging() -> None:
     """Configure application logging."""
