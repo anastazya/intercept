@@ -7,6 +7,7 @@ def register_blueprints(app):
     from .wifi import wifi_bp
     from .bluetooth import bluetooth_bp
     from .adsb import adsb_bp
+    from .acars import acars_bp
     from .satellite import satellite_bp
     from .gps import gps_bp
     from .settings import settings_bp
@@ -18,6 +19,7 @@ def register_blueprints(app):
     app.register_blueprint(wifi_bp)
     app.register_blueprint(bluetooth_bp)
     app.register_blueprint(adsb_bp)
+    app.register_blueprint(acars_bp)
     app.register_blueprint(satellite_bp)
     app.register_blueprint(gps_bp)
     app.register_blueprint(settings_bp)

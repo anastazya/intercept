@@ -53,6 +53,52 @@
             </div>
         </div>
 
+        <!-- ACARS Panel (right of map) - Collapsible -->
+        <div class="acars-sidebar" id="acarsSidebar">
+            <button class="acars-collapse-btn" id="acarsCollapseBtn" onclick="toggleAcarsSidebar()" title="Toggle ACARS Panel">
+                <span id="acarsCollapseIcon">◀</span>
+                <span class="acars-collapse-label">ACARS</span>
+            </button>
+            <div class="acars-sidebar-content" id="acarsSidebarContent">
+                <div class="panel acars-panel">
+                    <div class="panel-header">
+                        <span>ACARS MESSAGES</span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span id="acarsCount" style="font-size: 10px; color: var(--accent-cyan);">0</span>
+                            <div class="panel-indicator" id="acarsPanelIndicator"></div>
+                        </div>
+                    </div>
+                    <div id="acarsPanelContent">
+                        <div class="acars-info" style="font-size: 9px; color: var(--text-muted); padding: 5px 8px; border-bottom: 1px solid var(--border-color);">
+                            <span style="color: var(--accent-yellow);">⚠</span> Requires separate SDR (VHF ~131 MHz)
+                        </div>
+                        <div class="acars-controls" style="padding: 8px; border-bottom: 1px solid var(--border-color);">
+                            <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+                                <select id="acarsDeviceSelect" style="flex: 1; font-size: 10px;">
+                                    <option value="0">SDR 0</option>
+                                    <option value="1">SDR 1</option>
+                                </select>
+                                <select id="acarsRegionSelect" onchange="setAcarsFreqs()" style="flex: 1; font-size: 10px;">
+                                    <option value="na">N. America</option>
+                                    <option value="eu">Europe</option>
+                                    <option value="ap">Asia-Pac</option>
+                                </select>
+                            </div>
+                            <button class="acars-btn" id="acarsToggleBtn" onclick="toggleAcars()" style="width: 100%;">
+                                ▶ START ACARS
+                            </button>
+                        </div>
+                        <div class="acars-messages" id="acarsMessages">
+                            <div class="no-aircraft" style="padding: 20px; text-align: center;">
+                                <div style="font-size: 10px; color: var(--text-muted);">No ACARS messages</div>
+                                <div style="font-size: 9px; color: var(--text-dim); margin-top: 5px;">Start ACARS to receive aircraft datalink messages</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Sidebar -->
         <div class="sidebar">
             <!-- View Toggle -->
@@ -2214,6 +2260,179 @@ sudo make install</code>
 
         // Initialize airband on page load
         document.addEventListener('DOMContentLoaded', initAirband);
+
+        // ============================================
+        // ACARS Functions
+        // ============================================
+        let acarsEventSource = null;
+        let isAcarsRunning = false;
+        let acarsMessageCount = 0;
+        let acarsSidebarCollapsed = localStorage.getItem('acarsSidebarCollapsed') === 'true';
+        let acarsFrequencies = {
+            'na': ['129.125', '130.025', '130.450', '131.550'],
+            'eu': ['131.525', '131.725', '131.550'],
+            'ap': ['131.550', '131.450']
+        };
+
+        function toggleAcarsSidebar() {
+            const sidebar = document.getElementById('acarsSidebar');
+            acarsSidebarCollapsed = !acarsSidebarCollapsed;
+            sidebar.classList.toggle('collapsed', acarsSidebarCollapsed);
+            localStorage.setItem('acarsSidebarCollapsed', acarsSidebarCollapsed);
+        }
+
+        // Initialize ACARS sidebar state
+        document.addEventListener('DOMContentLoaded', () => {
+            const sidebar = document.getElementById('acarsSidebar');
+            if (sidebar && acarsSidebarCollapsed) {
+                sidebar.classList.add('collapsed');
+            }
+        });
+
+        function setAcarsFreqs() {
+            // Just updates the region selection - frequencies are sent on start
+        }
+
+        function getAcarsRegionFreqs() {
+            const region = document.getElementById('acarsRegionSelect').value;
+            return acarsFrequencies[region] || acarsFrequencies['na'];
+        }
+
+        function toggleAcars() {
+            if (isAcarsRunning) {
+                stopAcars();
+            } else {
+                startAcars();
+            }
+        }
+
+        function startAcars() {
+            const device = document.getElementById('acarsDeviceSelect').value;
+            const frequencies = getAcarsRegionFreqs();
+
+            // Warn if using same device as ADS-B
+            if (isTracking && device === '0') {
+                const useAnyway = confirm(
+                    'Warning: ADS-B tracking may be using SDR device 0.\n\n' +
+                    'ACARS uses VHF frequencies (129-131 MHz) while ADS-B uses 1090 MHz.\n' +
+                    'You need TWO separate SDR devices to receive both simultaneously.\n\n' +
+                    'Click OK to start ACARS on device ' + device + ' anyway.'
+                );
+                if (!useAnyway) return;
+            }
+
+            fetch('/acars/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ device, frequencies, gain: '40' })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    isAcarsRunning = true;
+                    acarsMessageCount = 0;
+                    document.getElementById('acarsToggleBtn').textContent = '■ STOP ACARS';
+                    document.getElementById('acarsToggleBtn').style.background = 'var(--accent-red)';
+                    document.getElementById('acarsPanelIndicator').classList.add('active');
+                    startAcarsStream();
+                } else {
+                    alert('ACARS Error: ' + data.message);
+                }
+            })
+            .catch(err => alert('ACARS Error: ' + err));
+        }
+
+        function stopAcars() {
+            fetch('/acars/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(() => {
+                    isAcarsRunning = false;
+                    document.getElementById('acarsToggleBtn').textContent = '▶ START ACARS';
+                    document.getElementById('acarsToggleBtn').style.background = '';
+                    document.getElementById('acarsPanelIndicator').classList.remove('active');
+                    if (acarsEventSource) {
+                        acarsEventSource.close();
+                        acarsEventSource = null;
+                    }
+                });
+        }
+
+        function startAcarsStream() {
+            if (acarsEventSource) acarsEventSource.close();
+            acarsEventSource = new EventSource('/acars/stream');
+
+            acarsEventSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'acars') {
+                    acarsMessageCount++;
+                    document.getElementById('acarsCount').textContent = acarsMessageCount;
+                    addAcarsMessage(data);
+                }
+            };
+
+            acarsEventSource.onerror = function() {
+                console.error('ACARS stream error');
+            };
+        }
+
+        function addAcarsMessage(data) {
+            const container = document.getElementById('acarsMessages');
+
+            // Remove "no messages" placeholder if present
+            const placeholder = container.querySelector('.no-aircraft');
+            if (placeholder) placeholder.remove();
+
+            const msg = document.createElement('div');
+            msg.className = 'acars-message-item';
+            msg.style.cssText = 'padding: 6px 8px; border-bottom: 1px solid var(--border-color); font-size: 10px;';
+
+            const flight = data.flight || 'UNKNOWN';
+            const reg = data.reg || '';
+            const label = data.label || '';
+            const text = data.text || data.msg || '';
+            const time = new Date().toLocaleTimeString();
+
+            msg.innerHTML = `
+                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: var(--accent-cyan); font-weight: bold;">${flight}</span>
+                    <span style="color: var(--text-muted);">${time}</span>
+                </div>
+                ${reg ? `<div style="color: var(--text-muted); font-size: 9px;">Reg: ${reg}</div>` : ''}
+                ${label ? `<div style="color: var(--accent-green);">Label: ${label}</div>` : ''}
+                ${text ? `<div style="color: var(--text-primary); margin-top: 3px; word-break: break-word;">${text}</div>` : ''}
+            `;
+
+            container.insertBefore(msg, container.firstChild);
+
+            // Keep max 50 messages
+            while (container.children.length > 50) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        // Populate ACARS device selector
+        document.addEventListener('DOMContentLoaded', () => {
+            fetch('/devices')
+                .then(r => r.json())
+                .then(devices => {
+                    const select = document.getElementById('acarsDeviceSelect');
+                    select.innerHTML = '';
+                    if (devices.length === 0) {
+                        select.innerHTML = '<option value="0">No SDR detected</option>';
+                    } else {
+                        devices.forEach((d, i) => {
+                            const opt = document.createElement('option');
+                            opt.value = d.index || i;
+                            opt.textContent = `Device ${d.index || i}: ${d.name || d.type || 'SDR'}`;
+                            select.appendChild(opt);
+                        });
+                        // Default to device 1 if available (device 0 likely used for ADS-B)
+                        if (devices.length > 1) {
+                            select.value = '1';
+                        }
+                    }
+                });
+        });
 
         // ============================================
         // SQUAWK CODE REFERENCE

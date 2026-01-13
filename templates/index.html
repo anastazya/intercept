@@ -857,6 +857,50 @@
                     <button class="stop-btn" id="stopAdsbBtn" onclick="stopAdsbScan()" style="display: none;">
                         Stop Tracking
                     </button>
+
+                    <!-- ACARS Sub-section -->
+                    <div class="section" style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                        <h3 style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="toggleAcarsPanel()">
+                            <span>ACARS Messaging</span>
+                            <span id="acarsToggleIcon" style="font-size: 10px; color: var(--text-secondary);">&#9660;</span>
+                        </h3>
+                        <div id="acarsPanel">
+                            <div class="info-text" style="margin-bottom: 10px;">
+                                Decode aircraft digital messages (ACARS) on VHF frequencies.
+                            </div>
+                            <div style="background: rgba(255,193,7,0.1); border: 1px solid var(--accent-yellow); border-radius: 4px; padding: 8px; margin-bottom: 10px; font-size: 10px;">
+                                <strong style="color: var(--accent-yellow);">⚠ Two SDRs Required</strong><br>
+                                <span style="color: var(--text-secondary);">ADS-B uses 1090 MHz, ACARS uses VHF (~131 MHz). To receive both simultaneously, you need two separate RTL-SDR devices.</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Frequencies (MHz)</label>
+                                <input type="text" id="acarsFrequencies" value="131.550,130.025,129.125,131.525" placeholder="131.550,130.025,...">
+                                <div class="info-text" style="margin-top: 4px;">Comma-separated VHF ACARS frequencies</div>
+                            </div>
+                            <div class="form-group">
+                                <label>Gain (dB, 0 = auto)</label>
+                                <input type="text" id="acarsGain" value="40" placeholder="40">
+                            </div>
+                            <div class="form-group">
+                                <label>PPM Correction</label>
+                                <input type="text" id="acarsPpm" value="0" placeholder="0">
+                            </div>
+                            <div class="preset-buttons" style="margin-bottom: 10px;">
+                                <button class="preset-btn" onclick="setAcarsRegion('na')">N. America</button>
+                                <button class="preset-btn" onclick="setAcarsRegion('eu')">Europe</button>
+                                <button class="preset-btn" onclick="setAcarsRegion('ap')">Asia-Pacific</button>
+                            </div>
+                            <div class="info-text" style="margin-top: 8px; display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center;" id="acarsToolStatus">
+                                <span>acarsdec:</span><span class="tool-status" id="acarsdecStatus">Checking...</span>
+                            </div>
+                            <button class="run-btn" id="startAcarsBtn" onclick="startAcars()" style="margin-top: 10px;">
+                                Start ACARS
+                            </button>
+                            <button class="stop-btn" id="stopAcarsBtn" onclick="stopAcars()" style="display: none; margin-top: 10px;">
+                                Stop ACARS
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- SATELLITE MODE -->
@@ -1189,18 +1233,55 @@
 
                 <!-- Aircraft Visualizations - Leaflet Map -->
                 <div class="wifi-visuals" id="aircraftVisuals" style="display: none;">
-                    <!-- Map Panel -->
-                    <div class="wifi-visual-panel" style="grid-column: span 2;">
-                        <h5 style="color: var(--accent-cyan); text-shadow: 0 0 10px var(--accent-cyan);">ADS-B AIRCRAFT TRACKING</h5>
-                        <div class="aircraft-map-container">
-                            <div class="map-header">
-                                <span id="radarTime">--:--:--</span>
-                                <span id="radarStatus">TRACKING</span>
+                    <!-- Map Panel with ACARS sidebar -->
+                    <div class="wifi-visual-panel" style="grid-column: span 2; display: flex; gap: 0;">
+                        <!-- Map -->
+                        <div style="flex: 1; display: flex; flex-direction: column;">
+                            <h5 style="color: var(--accent-cyan); text-shadow: 0 0 10px var(--accent-cyan); padding: 0 10px;">ADS-B AIRCRAFT TRACKING</h5>
+                            <div class="aircraft-map-container" style="flex: 1;">
+                                <div class="map-header">
+                                    <span id="radarTime">--:--:--</span>
+                                    <span id="radarStatus">TRACKING</span>
+                                </div>
+                                <div id="aircraftMap"></div>
+                                <div class="map-footer">
+                                    <span>AIRCRAFT: <span id="aircraftCount">0</span></span>
+                                    <span>CENTER: <span id="mapCenter">--</span></span>
+                                </div>
                             </div>
-                            <div id="aircraftMap"></div>
-                            <div class="map-footer">
-                                <span>AIRCRAFT: <span id="aircraftCount">0</span></span>
-                                <span>CENTER: <span id="mapCenter">--</span></span>
+                        </div>
+                        <!-- ACARS Sidebar (Collapsible) -->
+                        <div class="main-acars-sidebar" id="mainAcarsSidebar">
+                            <button class="main-acars-collapse-btn" onclick="toggleMainAcarsSidebar()" title="Toggle ACARS">
+                                <span id="mainAcarsCollapseIcon">◀</span>
+                                <span class="main-acars-collapse-label">ACARS</span>
+                            </button>
+                            <div class="main-acars-content" id="mainAcarsContent">
+                                <div style="padding: 8px; border-bottom: 1px solid var(--border-color);">
+                                    <h5 style="color: var(--accent-green); margin-bottom: 8px; font-size: 11px;">ACARS MESSAGES</h5>
+                                    <div style="font-size: 9px; color: var(--text-muted); margin-bottom: 8px;">
+                                        <span style="color: var(--accent-yellow);">⚠</span> Requires separate SDR
+                                    </div>
+                                    <div style="display: flex; gap: 4px; margin-bottom: 5px;">
+                                        <select id="mainAcarsDevice" style="flex: 1; font-size: 9px; padding: 3px;">
+                                            <option value="0">SDR 0</option>
+                                            <option value="1">SDR 1</option>
+                                        </select>
+                                        <select id="mainAcarsRegion" style="flex: 1; font-size: 9px; padding: 3px;">
+                                            <option value="na">N.America</option>
+                                            <option value="eu">Europe</option>
+                                            <option value="ap">Asia-Pac</option>
+                                        </select>
+                                    </div>
+                                    <button id="mainAcarsToggleBtn" onclick="toggleMainAcars()" style="width: 100%; padding: 5px; font-size: 9px; background: var(--bg-dark); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); cursor: pointer;">
+                                        ▶ START
+                                    </button>
+                                </div>
+                                <div class="main-acars-messages" id="mainAcarsMessages" style="flex: 1; overflow-y: auto; font-size: 10px;">
+                                    <div style="padding: 15px; text-align: center; color: var(--text-muted);">
+                                        No ACARS messages
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1515,6 +1596,78 @@
                     @keyframes pulse {
                         0%, 100% { opacity: 0.3; transform: scale(0.8); }
                         50% { opacity: 1; transform: scale(1); }
+                    }
+
+                    /* Main ACARS Sidebar (Collapsible) */
+                    .main-acars-sidebar {
+                        width: 220px;
+                        background: var(--bg-panel);
+                        border-left: 1px solid var(--border-color);
+                        display: flex;
+                        flex-direction: row;
+                        transition: width 0.3s ease;
+                    }
+                    .main-acars-sidebar.collapsed {
+                        width: 28px;
+                    }
+                    .main-acars-collapse-btn {
+                        width: 28px;
+                        min-width: 28px;
+                        background: rgba(0,0,0,0.3);
+                        border: none;
+                        border-right: 1px solid var(--border-color);
+                        color: var(--accent-cyan);
+                        cursor: pointer;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        gap: 6px;
+                        padding: 8px 0;
+                    }
+                    .main-acars-collapse-btn:hover {
+                        background: rgba(74, 158, 255, 0.1);
+                    }
+                    .main-acars-collapse-label {
+                        writing-mode: vertical-rl;
+                        text-orientation: mixed;
+                        font-size: 9px;
+                        font-weight: 600;
+                        letter-spacing: 1px;
+                    }
+                    .main-acars-sidebar.collapsed .main-acars-collapse-label { display: block; }
+                    .main-acars-sidebar:not(.collapsed) .main-acars-collapse-label { display: none; }
+                    #mainAcarsCollapseIcon {
+                        font-size: 9px;
+                        transition: transform 0.3s;
+                    }
+                    .main-acars-sidebar.collapsed #mainAcarsCollapseIcon {
+                        transform: rotate(180deg);
+                    }
+                    .main-acars-content {
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                        overflow: hidden;
+                        min-width: 0;
+                    }
+                    .main-acars-sidebar.collapsed .main-acars-content {
+                        display: none;
+                    }
+                    .main-acars-messages {
+                        max-height: 350px;
+                    }
+                    .main-acars-msg {
+                        padding: 6px 8px;
+                        border-bottom: 1px solid var(--border-color);
+                        animation: fadeInMsg 0.3s ease;
+                    }
+                    .main-acars-msg:hover {
+                        background: rgba(74, 158, 255, 0.05);
+                    }
+                    @keyframes fadeInMsg {
+                        from { opacity: 0; transform: translateY(-3px); }
+                        to { opacity: 1; transform: translateY(0); }
                     }
                 </style>
 
@@ -2264,6 +2417,7 @@
                 initBtRadar();
             } else if (mode === 'aircraft') {
                 checkAdsbTools();
+                checkAcarsTools();
                 initAircraftRadar();
             } else if (mode === 'satellite') {
                 initPolarPlot();
@@ -7205,6 +7359,274 @@
                         adsbEventSource = null;
                     }
                 });
+        }
+
+        // ============================================
+        // ACARS Functions
+        // ============================================
+        let acarsEventSource = null;
+        let isAcarsRunning = false;
+        let acarsMessageCount = 0;
+
+        function toggleAcarsPanel() {
+            const panel = document.getElementById('acarsPanel');
+            const icon = document.getElementById('acarsToggleIcon');
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                icon.innerHTML = '&#9660;';
+            } else {
+                panel.style.display = 'none';
+                icon.innerHTML = '&#9654;';
+            }
+        }
+
+        function setAcarsRegion(region) {
+            const freqInput = document.getElementById('acarsFrequencies');
+            const regions = {
+                'na': '129.125,130.025,130.450,131.550',
+                'eu': '131.525,131.725,131.550',
+                'ap': '131.550,131.450'
+            };
+            freqInput.value = regions[region] || regions['na'];
+        }
+
+        function checkAcarsTools() {
+            fetch('/acars/tools')
+                .then(r => r.json())
+                .then(data => {
+                    const status = document.getElementById('acarsdecStatus');
+                    if (data.acarsdec) {
+                        status.textContent = 'OK';
+                        status.className = 'tool-status ok';
+                    } else {
+                        status.textContent = 'Missing';
+                        status.className = 'tool-status missing';
+                    }
+                })
+                .catch(() => {
+                    const status = document.getElementById('acarsdecStatus');
+                    status.textContent = 'Error';
+                    status.className = 'tool-status missing';
+                });
+        }
+
+        function startAcars() {
+            const frequencies = document.getElementById('acarsFrequencies').value.split(',').map(f => f.trim());
+            const gain = document.getElementById('acarsGain').value;
+            const ppm = document.getElementById('acarsPpm').value;
+            const device = getSelectedDevice();
+
+            fetch('/acars/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ frequencies, gain, ppm, device })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    isAcarsRunning = true;
+                    acarsMessageCount = 0;
+                    document.getElementById('startAcarsBtn').style.display = 'none';
+                    document.getElementById('stopAcarsBtn').style.display = 'block';
+                    startAcarsStream();
+                } else {
+                    alert('ACARS Error: ' + data.message);
+                }
+            })
+            .catch(err => alert('ACARS Error: ' + err));
+        }
+
+        function stopAcars() {
+            fetch('/acars/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    isAcarsRunning = false;
+                    document.getElementById('startAcarsBtn').style.display = 'block';
+                    document.getElementById('stopAcarsBtn').style.display = 'none';
+                    if (acarsEventSource) {
+                        acarsEventSource.close();
+                        acarsEventSource = null;
+                    }
+                });
+        }
+
+        function startAcarsStream() {
+            if (acarsEventSource) acarsEventSource.close();
+            acarsEventSource = new EventSource('/acars/stream');
+
+            acarsEventSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'acars') {
+                    acarsMessageCount++;
+                    addAcarsToOutput(data);
+                } else if (data.type === 'error') {
+                    console.error('ACARS error:', data.message);
+                }
+            };
+
+            acarsEventSource.onerror = function() {
+                console.error('ACARS stream error');
+            };
+        }
+
+        function addAcarsToOutput(data) {
+            const output = document.getElementById('outputList');
+            const item = document.createElement('div');
+            item.className = 'output-item acars-message';
+
+            const flight = data.flight || 'Unknown';
+            const reg = data.reg || '';
+            const label = data.label || '';
+            const text = data.text || data.msg || '';
+
+            item.innerHTML = `
+                <span class="timestamp">${new Date().toLocaleTimeString()}</span>
+                <span class="acars-flight" style="color: var(--accent-cyan); font-weight: bold;">${flight}</span>
+                ${reg ? `<span class="acars-reg" style="color: var(--text-secondary);">[${reg}]</span>` : ''}
+                <span class="acars-label" style="color: var(--accent-green);">${label}</span>
+                <span class="acars-text">${text}</span>
+            `;
+
+            output.insertBefore(item, output.firstChild);
+
+            // Keep output manageable
+            while (output.children.length > 200) {
+                output.removeChild(output.lastChild);
+            }
+        }
+
+        // ============================================
+        // Main ACARS Sidebar (Collapsible - Aircraft Tab)
+        // ============================================
+        let mainAcarsSidebarCollapsed = localStorage.getItem('mainAcarsSidebarCollapsed') === 'true';
+        let mainAcarsEventSource = null;
+        let isMainAcarsRunning = false;
+        let mainAcarsMessageCount = 0;
+
+        // Initialize sidebar state on load
+        document.addEventListener('DOMContentLoaded', function() {
+            const sidebar = document.getElementById('mainAcarsSidebar');
+            if (sidebar && mainAcarsSidebarCollapsed) {
+                sidebar.classList.add('collapsed');
+            }
+        });
+
+        function toggleMainAcarsSidebar() {
+            const sidebar = document.getElementById('mainAcarsSidebar');
+            mainAcarsSidebarCollapsed = !mainAcarsSidebarCollapsed;
+            sidebar.classList.toggle('collapsed', mainAcarsSidebarCollapsed);
+            localStorage.setItem('mainAcarsSidebarCollapsed', mainAcarsSidebarCollapsed);
+        }
+
+        function toggleMainAcars() {
+            if (isMainAcarsRunning) {
+                stopMainAcars();
+            } else {
+                startMainAcars();
+            }
+        }
+
+        function startMainAcars() {
+            const device = document.getElementById('mainAcarsDevice').value;
+            const region = document.getElementById('mainAcarsRegion').value;
+
+            const regions = {
+                'na': ['129.125', '130.025', '130.450', '131.550'],
+                'eu': ['131.525', '131.725', '131.550'],
+                'ap': ['131.550', '131.450']
+            };
+            const frequencies = regions[region] || regions['na'];
+
+            fetch('/acars/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ frequencies, device: parseInt(device), gain: 40 })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'started') {
+                    isMainAcarsRunning = true;
+                    mainAcarsMessageCount = 0;
+                    document.getElementById('mainAcarsToggleBtn').innerHTML = '■ STOP';
+                    document.getElementById('mainAcarsToggleBtn').style.background = 'var(--accent-red)';
+                    document.getElementById('mainAcarsToggleBtn').style.borderColor = 'var(--accent-red)';
+                    document.getElementById('mainAcarsToggleBtn').style.color = '#fff';
+                    startMainAcarsStream();
+                } else {
+                    alert('ACARS Error: ' + data.message);
+                }
+            })
+            .catch(err => alert('ACARS Error: ' + err));
+        }
+
+        function stopMainAcars() {
+            fetch('/acars/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    isMainAcarsRunning = false;
+                    document.getElementById('mainAcarsToggleBtn').innerHTML = '▶ START';
+                    document.getElementById('mainAcarsToggleBtn').style.background = 'var(--bg-dark)';
+                    document.getElementById('mainAcarsToggleBtn').style.borderColor = 'var(--accent-cyan)';
+                    document.getElementById('mainAcarsToggleBtn').style.color = 'var(--accent-cyan)';
+                    if (mainAcarsEventSource) {
+                        mainAcarsEventSource.close();
+                        mainAcarsEventSource = null;
+                    }
+                });
+        }
+
+        function startMainAcarsStream() {
+            if (mainAcarsEventSource) mainAcarsEventSource.close();
+            mainAcarsEventSource = new EventSource('/acars/stream');
+
+            mainAcarsEventSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'acars') {
+                    mainAcarsMessageCount++;
+                    addMainAcarsMessage(data);
+                    // Also add to main output if ADS-B mode is active
+                    addAcarsToOutput(data);
+                }
+            };
+
+            mainAcarsEventSource.onerror = function() {
+                console.error('Main ACARS stream error');
+            };
+        }
+
+        function addMainAcarsMessage(data) {
+            const container = document.getElementById('mainAcarsMessages');
+
+            // Remove placeholder if present
+            const placeholder = container.querySelector('div[style*="text-align: center"]');
+            if (placeholder && placeholder.textContent.includes('No ACARS')) {
+                placeholder.remove();
+            }
+
+            const flight = data.flight || 'Unknown';
+            const reg = data.reg || '';
+            const text = data.text || data.msg || '';
+            const label = data.label || '';
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            const msgEl = document.createElement('div');
+            msgEl.className = 'main-acars-msg';
+            msgEl.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                    <span style="color: var(--accent-cyan); font-weight: bold;">${flight}</span>
+                    <span style="color: var(--text-muted); font-size: 8px;">${time}</span>
+                </div>
+                ${reg ? `<div style="color: var(--text-secondary); font-size: 9px;">${reg}</div>` : ''}
+                ${label ? `<div style="color: var(--accent-green); font-size: 9px;">[${label}]</div>` : ''}
+                ${text ? `<div style="color: var(--text-primary); font-size: 9px; margin-top: 2px; word-break: break-word;">${text.substring(0, 100)}${text.length > 100 ? '...' : ''}</div>` : ''}
+            `;
+
+            container.insertBefore(msgEl, container.firstChild);
+
+            // Keep list manageable
+            while (container.children.length > 50) {
+                container.removeChild(container.lastChild);
+            }
         }
 
         // Batching state for aircraft updates to prevent browser freeze

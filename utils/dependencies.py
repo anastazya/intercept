@@ -195,6 +195,20 @@ TOOL_DEPENDENCIES = {
             }
         }
     },
+    'acars': {
+        'name': 'Aircraft Messaging (ACARS)',
+        'tools': {
+            'acarsdec': {
+                'required': True,
+                'description': 'ACARS VHF decoder',
+                'install': {
+                    'apt': 'sudo apt install acarsdec',
+                    'brew': 'brew install acarsdec',
+                    'manual': 'https://github.com/TLeconte/acarsdec'
+                }
+            }
+        }
+    },
     'satellite': {
         'name': 'Satellite Tracking',
         'tools': {

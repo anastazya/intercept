@@ -139,6 +139,7 @@ check_tools() {
   check_required "multimon-ng" "Pager decoder" multimon-ng
   check_required "rtl_433"     "433MHz sensor decoder" rtl_433 rtl433
   check_required "dump1090"    "ADS-B decoder" dump1090
+  check_required "acarsdec"    "ACARS decoder" acarsdec
 
   echo
   info "GPS:"
@@ -305,7 +306,7 @@ install_multimon_ng_from_source_macos() {
 }
 
 install_macos_packages() {
-  TOTAL_STEPS=12
+  TOTAL_STEPS=13
   CURRENT_STEP=0
 
   progress "Checking Homebrew"
@@ -330,6 +331,9 @@ install_macos_packages() {
 
   progress "Installing dump1090"
   (brew_install dump1090-mutability) || warn "dump1090 not available via Homebrew"
+
+  progress "Installing acarsdec"
+  (brew_install acarsdec) || warn "acarsdec not available via Homebrew"
 
   progress "Installing aircrack-ng"
   brew_install aircrack-ng
@@ -412,6 +416,34 @@ install_dump1090_from_source_debian() {
   )
 }
 
+install_acarsdec_from_source_debian() {
+  info "acarsdec not available via APT. Building from source..."
+
+  apt_install build-essential git cmake \
+    librtlsdr-dev libusb-1.0-0-dev libsndfile1-dev
+
+  # Run in subshell to isolate EXIT trap
+  (
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' EXIT
+
+    info "Cloning acarsdec..."
+    git clone --depth 1 https://github.com/TLeconte/acarsdec.git "$tmp_dir/acarsdec" >/dev/null 2>&1 \
+      || { warn "Failed to clone acarsdec"; exit 1; }
+
+    cd "$tmp_dir/acarsdec"
+    mkdir -p build && cd build
+
+    info "Compiling acarsdec..."
+    if cmake .. -Drtl=ON >/dev/null 2>&1 && make >/dev/null 2>&1; then
+      $SUDO install -m 0755 acarsdec /usr/local/bin/acarsdec
+      ok "acarsdec installed successfully."
+    else
+      warn "Failed to build acarsdec from source. ACARS decoding will not be available."
+    fi
+  )
+}
+
 setup_udev_rules_debian() {
   [[ -d /etc/udev/rules.d ]] || { warn "udev not found; skipping RTL-SDR udev rules."; return 0; }
 
@@ -464,7 +496,7 @@ install_debian_packages() {
   export DEBIAN_FRONTEND=noninteractive
   export NEEDRESTART_MODE=a
 
-  TOTAL_STEPS=16
+  TOTAL_STEPS=17
   CURRENT_STEP=0
 
   progress "Updating APT package lists"
@@ -519,6 +551,12 @@ install_debian_packages() {
 	  fi
   fi
   cmd_exists dump1090 || install_dump1090_from_source_debian
+
+  progress "Installing acarsdec"
+  if ! cmd_exists acarsdec; then
+    apt_install acarsdec || true
+  fi
+  cmd_exists acarsdec || install_acarsdec_from_source_debian
 
   progress "Configuring udev rules"
   setup_udev_rules_debian

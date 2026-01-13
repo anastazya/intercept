@@ -103,6 +103,11 @@ satellite_process = None
 satellite_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
 satellite_lock = threading.Lock()
 
+# ACARS aircraft messaging
+acars_process = None
+acars_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
+acars_lock = threading.Lock()
+
 # ============================================
 # GLOBAL STATE DICTIONARIES
 # ============================================
@@ -416,6 +421,7 @@ def health_check() -> Response:
             'pager': current_process is not None and (current_process.poll() is None if current_process else False),
             'sensor': sensor_process is not None and (sensor_process.poll() is None if sensor_process else False),
             'adsb': adsb_process is not None and (adsb_process.poll() is None if adsb_process else False),
+            'acars': acars_process is not None and (acars_process.poll() is None if acars_process else False),
             'wifi': wifi_process is not None and (wifi_process.poll() is None if wifi_process else False),
             'bluetooth': bt_process is not None and (bt_process.poll() is None if bt_process else False),
         },
@@ -431,7 +437,7 @@ def health_check() -> Response:
 @app.route('/killall', methods=['POST'])
 def kill_all() -> Response:
     """Kill all decoder and WiFi processes."""
-    global current_process, sensor_process, wifi_process, adsb_process
+    global current_process, sensor_process, wifi_process, adsb_process, acars_process
 
     # Import adsb module to reset its state
     from routes import adsb as adsb_module
@@ -440,7 +446,7 @@ def kill_all() -> Response:
     processes_to_kill = [
         'rtl_fm', 'multimon-ng', 'rtl_433',
         'airodump-ng', 'aireplay-ng', 'airmon-ng',
-        'dump1090'
+        'dump1090', 'acarsdec'
     ]
 
     for proc in processes_to_kill:
@@ -464,6 +470,10 @@ def kill_all() -> Response:
     with adsb_lock:
         adsb_process = None
         adsb_module.adsb_using_service = False
+
+    # Reset ACARS state
+    with acars_lock:
+        acars_process = None
 
     return jsonify({'status': 'killed', 'processes': killed})
 
@@ -517,7 +527,7 @@ def main() -> None:
 
     print("=" * 50)
     print("  INTERCEPT // Signal Intelligence")
-    print("  Pager / 433MHz / Aircraft / Satellite / WiFi / BT")
+    print("  Pager / 433MHz / Aircraft / ACARS / Satellite / WiFi / BT")
     print("=" * 50)
     print()
 

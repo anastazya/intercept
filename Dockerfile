@@ -35,25 +35,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Build dump1090-fa from source (packages not available in slim repos)
+# Build dump1090-fa and acarsdec from source (packages not available in slim repos)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
     pkg-config \
+    cmake \
     libncurses-dev \
+    libsndfile1-dev \
+    # Build dump1090
     && cd /tmp \
     && git clone --depth 1 https://github.com/flightaware/dump1090.git \
     && cd dump1090 \
     && make \
     && cp dump1090 /usr/bin/dump1090-fa \
     && ln -s /usr/bin/dump1090-fa /usr/bin/dump1090 \
-    && cd /app \
     && rm -rf /tmp/dump1090 \
+    # Build acarsdec
+    && cd /tmp \
+    && git clone --depth 1 https://github.com/TLeconte/acarsdec.git \
+    && cd acarsdec \
+    && mkdir build && cd build \
+    && cmake .. -Drtl=ON \
+    && make \
+    && cp acarsdec /usr/bin/acarsdec \
+    && rm -rf /tmp/acarsdec \
     # Cleanup build tools to reduce image size
     && apt-get remove -y \
         build-essential \
         git \
         pkg-config \
+        cmake \
         libncurses-dev \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
