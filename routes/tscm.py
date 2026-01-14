@@ -89,6 +89,8 @@ def _emit_event(event_type: str, data: dict) -> None:
 
 def _check_available_devices(wifi: bool, bt: bool, rf: bool) -> dict:
     """Check which scanning devices are available."""
+    import os
+    import platform
     import shutil
     import subprocess
 
@@ -103,58 +105,111 @@ def _check_available_devices(wifi: bool, bt: bool, rf: bool) -> dict:
 
     # Check WiFi
     if wifi:
-        if shutil.which('airodump-ng') or shutil.which('iwlist'):
-            # Check for wireless interfaces
-            try:
-                result = subprocess.run(
-                    ['iwconfig'],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if 'no wireless extensions' not in result.stderr.lower() and result.stdout.strip():
-                    available['wifi'] = True
-                    available['wifi_reason'] = 'Wireless interface detected'
-                else:
-                    available['wifi_reason'] = 'No wireless interfaces found'
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                available['wifi_reason'] = 'Cannot detect wireless interfaces'
-        else:
-            available['wifi_reason'] = 'WiFi tools not installed (aircrack-ng)'
-
-    # Check Bluetooth
-    if bt:
-        if shutil.which('bluetoothctl') or shutil.which('hcitool'):
-            try:
-                result = subprocess.run(
-                    ['hciconfig'],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if 'hci' in result.stdout.lower():
-                    available['bluetooth'] = True
-                    available['bt_reason'] = 'Bluetooth adapter detected'
-                else:
-                    available['bt_reason'] = 'No Bluetooth adapters found'
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                # Try bluetoothctl as fallback
+        if platform.system() == 'Darwin':
+            # macOS: Check for airport utility
+            airport_path = '/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport'
+            if os.path.exists(airport_path):
                 try:
                     result = subprocess.run(
-                        ['bluetoothctl', 'list'],
+                        [airport_path, '-I'],
                         capture_output=True,
                         text=True,
                         timeout=5
                     )
-                    if result.stdout.strip():
+                    if result.returncode == 0:
+                        available['wifi'] = True
+                        available['wifi_reason'] = 'macOS WiFi available'
+                    else:
+                        available['wifi_reason'] = 'WiFi interface not active'
+                except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+                    available['wifi_reason'] = 'Cannot access WiFi interface'
+            else:
+                available['wifi_reason'] = 'macOS airport utility not found'
+        else:
+            # Linux: Check for wireless tools
+            if shutil.which('iwlist') or shutil.which('iw'):
+                try:
+                    result = subprocess.run(
+                        ['iwconfig'],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if 'no wireless extensions' not in result.stderr.lower() and result.stdout.strip():
+                        available['wifi'] = True
+                        available['wifi_reason'] = 'Wireless interface detected'
+                    else:
+                        available['wifi_reason'] = 'No wireless interfaces found'
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    # Try iw as fallback
+                    try:
+                        result = subprocess.run(
+                            ['iw', 'dev'],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if 'Interface' in result.stdout:
+                            available['wifi'] = True
+                            available['wifi_reason'] = 'Wireless interface detected'
+                        else:
+                            available['wifi_reason'] = 'No wireless interfaces found'
+                    except (subprocess.TimeoutExpired, FileNotFoundError):
+                        available['wifi_reason'] = 'Cannot detect wireless interfaces'
+            else:
+                available['wifi_reason'] = 'WiFi tools not installed (wireless-tools)'
+
+    # Check Bluetooth
+    if bt:
+        if platform.system() == 'Darwin':
+            # macOS: Check for Bluetooth via system_profiler
+            try:
+                result = subprocess.run(
+                    ['system_profiler', 'SPBluetoothDataType'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if 'Bluetooth' in result.stdout and result.returncode == 0:
+                    available['bluetooth'] = True
+                    available['bt_reason'] = 'macOS Bluetooth available'
+                else:
+                    available['bt_reason'] = 'Bluetooth not available'
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                available['bt_reason'] = 'Cannot detect Bluetooth'
+        else:
+            # Linux: Check for Bluetooth tools
+            if shutil.which('bluetoothctl') or shutil.which('hcitool'):
+                try:
+                    result = subprocess.run(
+                        ['hciconfig'],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    if 'hci' in result.stdout.lower():
                         available['bluetooth'] = True
                         available['bt_reason'] = 'Bluetooth adapter detected'
                     else:
                         available['bt_reason'] = 'No Bluetooth adapters found'
                 except (subprocess.TimeoutExpired, FileNotFoundError):
-                    available['bt_reason'] = 'Cannot detect Bluetooth adapters'
-        else:
-            available['bt_reason'] = 'Bluetooth tools not installed (bluez)'
+                    # Try bluetoothctl as fallback
+                    try:
+                        result = subprocess.run(
+                            ['bluetoothctl', 'list'],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if result.stdout.strip():
+                            available['bluetooth'] = True
+                            available['bt_reason'] = 'Bluetooth adapter detected'
+                        else:
+                            available['bt_reason'] = 'No Bluetooth adapters found'
+                    except (subprocess.TimeoutExpired, FileNotFoundError):
+                        available['bt_reason'] = 'Cannot detect Bluetooth adapters'
+            else:
+                available['bt_reason'] = 'Bluetooth tools not installed (bluez)'
 
     # Check RF/SDR
     if rf:
