@@ -2100,6 +2100,21 @@
                         padding: 4px 8px;
                         border-radius: 3px;
                     }
+                    .tscm-action-btn {
+                        padding: 10px 16px;
+                        background: var(--accent-green);
+                        border: none;
+                        border-radius: 4px;
+                        color: #000;
+                        font-size: 12px;
+                        font-weight: 600;
+                        cursor: pointer;
+                        transition: all 0.2s;
+                    }
+                    .tscm-action-btn:hover {
+                        background: #2ecc71;
+                        transform: translateY(-1px);
+                    }
                     .tscm-device-reasons {
                         font-size: 10px;
                         color: var(--text-secondary);
@@ -2296,6 +2311,7 @@
                     }
                     .device-detail-header {
                         padding: 16px;
+                        padding-right: 52px; /* Reserve space for close button */
                         border-bottom: 1px solid var(--border-color);
                         display: flex;
                         justify-content: space-between;
@@ -10665,6 +10681,27 @@
             }
             html += `</table></div>`;
 
+            // Add "Listen" button for RF signals
+            if (protocol === 'rf' && device.frequency) {
+                const freq = device.frequency;
+                html += `
+                    <div class="device-detail-section" style="border-bottom: none;">
+                        <h4>Actions</h4>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button class="tscm-action-btn" onclick="listenToRfSignal(${freq}, 'fm')">
+                                🎧 Listen (FM)
+                            </button>
+                            <button class="tscm-action-btn" onclick="listenToRfSignal(${freq}, 'am')">
+                                🎧 Listen (AM)
+                            </button>
+                        </div>
+                        <div style="font-size: 10px; color: var(--text-secondary); margin-top: 8px;">
+                            Opens Listening Post and tunes to this frequency
+                        </div>
+                    </div>
+                `;
+            }
+
             // Add indicators section
             if (device.indicators && device.indicators.length > 0) {
                 html += `
@@ -10708,6 +10745,28 @@
 
         function closeTscmDeviceModal() {
             document.getElementById('tscmDeviceModal').style.display = 'none';
+        }
+
+        function listenToRfSignal(frequency, modulation) {
+            // Close the modal
+            closeTscmDeviceModal();
+
+            // Switch to listening post mode
+            switchMode('listening');
+
+            // Wait a moment for the mode to switch, then tune to the frequency
+            setTimeout(() => {
+                if (typeof tuneToFrequency === 'function') {
+                    tuneToFrequency(frequency, modulation);
+                } else {
+                    // Fallback: manually update the frequency input
+                    const freqInput = document.getElementById('radioScanStart');
+                    if (freqInput) {
+                        freqInput.value = frequency.toFixed(1);
+                    }
+                    alert(`Tune to ${frequency.toFixed(3)} MHz (${modulation.toUpperCase()}) to listen`);
+                }
+            }, 300);
         }
 
         function showDevicesByCategory(category) {
