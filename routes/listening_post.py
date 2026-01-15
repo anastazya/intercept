@@ -439,9 +439,10 @@ def _start_audio_stream(frequency: float, modulation: str):
 
         try:
             # Use shell pipe for reliable streaming (Python subprocess piping can be unreliable)
-            # Log stderr to a temp file so we can see any errors from rtl_fm
-            stderr_log = '/tmp/rtl_fm_stderr.log'
-            shell_cmd = f"{' '.join(sdr_cmd)} 2>{stderr_log} | {' '.join(encoder_cmd)}"
+            # Log stderr to temp files so we can see any errors from rtl_fm and ffmpeg
+            rtl_stderr_log = '/tmp/rtl_fm_stderr.log'
+            ffmpeg_stderr_log = '/tmp/ffmpeg_stderr.log'
+            shell_cmd = f"{' '.join(sdr_cmd)} 2>{rtl_stderr_log} | {' '.join(encoder_cmd)} 2>{ffmpeg_stderr_log}"
             logger.info(f"Starting audio pipeline: {shell_cmd}")
 
             audio_rtl_process = None  # Not used in shell mode
@@ -458,22 +459,35 @@ def _start_audio_stream(frequency: float, modulation: str):
             time.sleep(0.3)
 
             if audio_process.poll() is not None:
-                # Read rtl_fm stderr from temp file
+                # Read stderr from temp files
                 rtl_stderr = ''
+                ffmpeg_stderr = ''
                 try:
-                    with open(stderr_log, 'r') as f:
+                    with open(rtl_stderr_log, 'r') as f:
                         rtl_stderr = f.read().strip()
                 except:
                     pass
-                logger.error(f"Audio pipeline exited immediately. rtl_fm stderr: {rtl_stderr}")
+                try:
+                    with open(ffmpeg_stderr_log, 'r') as f:
+                        ffmpeg_stderr = f.read().strip()
+                except:
+                    pass
+                logger.error(f"Audio pipeline exited immediately. rtl_fm stderr: {rtl_stderr}, ffmpeg stderr: {ffmpeg_stderr}")
                 return
 
-            # Also check for rtl_fm errors even if process is still running
+            # Also check for errors even if process is still running
             try:
-                with open(stderr_log, 'r') as f:
+                with open(rtl_stderr_log, 'r') as f:
                     rtl_stderr = f.read().strip()
                     if rtl_stderr:
                         logger.warning(f"rtl_fm stderr: {rtl_stderr}")
+            except:
+                pass
+            try:
+                with open(ffmpeg_stderr_log, 'r') as f:
+                    ffmpeg_stderr = f.read().strip()
+                    if ffmpeg_stderr:
+                        logger.warning(f"ffmpeg stderr: {ffmpeg_stderr}")
             except:
                 pass
 
@@ -893,12 +907,19 @@ def stream_audio() -> Response:
     poll_result = audio_process.poll()
     logger.info(f"Audio process poll result: {poll_result} (None means running)")
 
-    # Check for rtl_fm errors
+    # Check for rtl_fm and ffmpeg errors
     try:
         with open('/tmp/rtl_fm_stderr.log', 'r') as f:
             rtl_stderr = f.read().strip()
             if rtl_stderr:
                 logger.warning(f"rtl_fm stderr (at stream request): {rtl_stderr}")
+    except:
+        pass
+    try:
+        with open('/tmp/ffmpeg_stderr.log', 'r') as f:
+            ffmpeg_stderr = f.read().strip()
+            if ffmpeg_stderr:
+                logger.warning(f"ffmpeg stderr (at stream request): {ffmpeg_stderr}")
     except:
         pass
 
@@ -923,6 +944,14 @@ def stream_audio() -> Response:
                         break
                 else:
                     logger.warning(f"Audio stream: select timeout after {bytes_sent} bytes, iterations={iterations}, poll={audio_process.poll()}")
+                    # Check for errors on timeout
+                    try:
+                        with open('/tmp/ffmpeg_stderr.log', 'r') as f:
+                            ffmpeg_err = f.read().strip()
+                            if ffmpeg_err:
+                                logger.warning(f"ffmpeg stderr (timeout): {ffmpeg_err}")
+                    except:
+                        pass
                     # Timeout - check if process died
                     if audio_process.poll() is not None:
                         logger.warning(f"Audio process died during streaming after {bytes_sent} bytes")
