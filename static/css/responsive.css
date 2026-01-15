@@ -415,13 +415,24 @@
         -webkit-overflow-scrolling: touch;
     }
 
-    /* Visual panels should stack in single column on mobile */
+    /* Visual panels should stack in single column on mobile when visible */
     .wifi-visuals,
-    .bt-visuals,
-    #aircraftVisuals {
+    .bt-visuals {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    /* Only apply flex when aircraft visuals are shown (via JS setting display: grid) */
+    #aircraftVisuals[style*="grid"] {
         display: flex !important;
         flex-direction: column !important;
         gap: 10px;
+    }
+
+    /* APRS visuals - only when visible */
+    #aprsVisuals[style*="flex"] {
+        flex-direction: column !important;
     }
 
     .wifi-visual-panel {

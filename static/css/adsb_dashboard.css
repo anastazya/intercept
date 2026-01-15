@@ -1046,27 +1046,35 @@ body {
 @media (max-width: 767px) {
     /* Dashboard should be scrollable, not fixed height */
     .dashboard {
+        display: flex;
+        flex-direction: column;
         height: auto;
         min-height: calc(100dvh - 60px);
         overflow-y: auto;
+        overflow-x: hidden;
         -webkit-overflow-scrolling: touch;
     }
 
-    /* Main display needs explicit height on mobile */
+    /* Main display needs explicit height on mobile - reset grid properties */
     .main-display {
+        grid-column: auto;
+        grid-row: auto;
         width: 100%;
         height: 50vh;
         min-height: 300px;
         flex-shrink: 0;
+        order: 1;
     }
 
     /* Map container needs full dimensions */
     .display-container {
         height: 100%;
+        width: 100%;
     }
 
     #radarMap {
         height: 100% !important;
+        width: 100% !important;
         min-height: 300px;
     }
 
@@ -1081,8 +1089,18 @@ body {
 
     /* Sidebar should not be height restricted */
     .sidebar {
+        grid-column: auto;
+        grid-row: auto;
         max-height: none;
         flex-shrink: 0;
+        order: 2;
+        border-left: none;
+        border-top: 1px solid rgba(74, 158, 255, 0.2);
+    }
+
+    /* Hide ACARS sidebar on mobile */
+    .acars-sidebar {
+        display: none !important;
     }
 
     /* Selected aircraft panel - compact on mobile */
@@ -1103,6 +1121,9 @@ body {
 
     /* Controls bar - wrap and stack */
     .controls-bar {
+        order: 3;
+        grid-column: auto;
+        grid-row: auto;
         flex-wrap: wrap;
         gap: 8px;
         padding: 10px;
