@@ -89,8 +89,9 @@ Most features work with a basic RTL-SDR dongle (RTL2832U + R820T2).
 ## Discord Server
 
 <p align="center">
-  <a href="https://discord.gg/z3g3NJMe">Join our Discord</a>
+  <a href="https://discord.gg/EyeksEJmWE">Join our Discord</a>
 </p>
+
 
 ---
 
@@ -133,6 +134,7 @@ Created by **smittix** - [GitHub](https://github.com/smittix)
 [aircrack-ng](https://www.aircrack-ng.org/) |
 [Leaflet.js](https://leafletjs.com/) |
 [Celestrak](https://celestrak.org/)
+
 
 
 
