@@ -274,7 +274,7 @@
                     </div>
                 </div>
             </div>
-            <audio id="airbandPlayer" style="display: none;" crossorigin="anonymous"></audio>
+            <audio id="airbandPlayer" controls style="display: none; width: 100%; max-width: 300px; height: 32px; margin-top: 8px;"></audio>
         </div>
     </main>
 
@@ -3073,6 +3073,7 @@ sudo make install</code>
                 document.getElementById('airbandStatus').textContent = frequency.toFixed(3) + ' MHz';
                 document.getElementById('airbandStatus').style.color = 'var(--accent-green)';
                 document.getElementById('airbandVisualizerContainer').style.display = 'flex';
+                document.getElementById('airbandPlayer').style.display = 'block';
 
             } catch (err) {
                 console.error('[AIRBAND] Error:', err);
@@ -3089,6 +3090,7 @@ sudo make install</code>
             const audioPlayer = document.getElementById('airbandPlayer');
             audioPlayer.pause();
             audioPlayer.src = '';
+            audioPlayer.style.display = 'none';
 
             fetch('/listening/audio/stop', { method: 'POST' })
                 .then(r => r.json())
@@ -3098,6 +3100,7 @@ sudo make install</code>
                     document.getElementById('airbandBtn').classList.remove('active');
                     document.getElementById('airbandStatus').textContent = 'OFF';
                     document.getElementById('airbandStatus').style.color = 'var(--text-muted)';
+                    document.getElementById('airbandVisualizerContainer').style.display = 'none';
                 })
                 .catch(() => {});
         }
