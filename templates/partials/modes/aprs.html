@@ -9,63 +9,8 @@
                             <strong style="color: var(--accent-yellow);">Amateur Radio</strong><br>
                             <span style="color: var(--text-secondary);">APRS operates on 144.390 MHz (N. America) or 144.800 MHz (Europe). Decodes position, weather, and messages from ham radio operators.</span>
                         </div>
-                    </div>
-                    <div class="section">
-                        <h3>Configuration</h3>
-                        <div class="form-group">
-                            <label>Region</label>
-                            <select id="aprsRegion">
-                                <option value="north_america">North America (144.390)</option>
-                                <option value="europe">Europe (144.800)</option>
-                                <option value="uk">UK (144.800)</option>
-                                <option value="australia">Australia (145.175)</option>
-                                <option value="japan">Japan (144.640)</option>
-                            </select>
+                        <div style="background: rgba(74, 158, 255, 0.1); border: 1px solid rgba(74, 158, 255, 0.3); border-radius: 4px; padding: 8px; font-size: 10px;">
+                            <span style="color: var(--accent-cyan);">Controls in function bar above map</span>
                         </div>
-                        <div class="form-group">
-                            <label>Gain (dB)</label>
-                            <input type="text" id="aprsGain" value="40" placeholder="40">
-                        </div>
-                        <div class="info-text" style="margin-top: 8px; display: grid; grid-template-columns: auto auto; gap: 4px 8px; align-items: center;">
-                            <span>direwolf:</span><span class="tool-status" id="direwolfStatus">Checking...</span>
-                            <span>multimon-ng:</span><span class="tool-status" id="aprsMultimonStatus">Checking...</span>
-                        </div>
-                    </div>
-                    <button class="run-btn" id="startAprsBtn" onclick="startAprs()">
-                        Start APRS
-                    </button>
-                    <button class="stop-btn" id="stopAprsBtn" onclick="stopAprs()" style="display: none;">
-                        Stop APRS
-                    </button>
-                    <!-- APRS Status Bar -->
-                    <div id="aprsStatusBar" class="aprs-status-bar" style="display: none;">
-                        <div class="aprs-status-indicator">
-                            <span class="aprs-status-dot" id="aprsStatusDot"></span>
-                            <span class="aprs-status-text" id="aprsStatusText">STANDBY</span>
-                        </div>
-                        <div class="aprs-status-stats">
-                            <span class="aprs-stat"><span class="aprs-stat-label">FREQ:</span> <span id="aprsStatusFreq">--</span></span>
-                            <span class="aprs-stat"><span class="aprs-stat-label">STATIONS:</span> <span id="aprsStatusStations">0</span></span>
-                            <span class="aprs-stat"><span class="aprs-stat-label">PACKETS:</span> <span id="aprsStatusPackets">0</span></span>
-                        </div>
-                    </div>
-                    <!-- Signal Meter -->
-                    <div id="aprsSignalMeter" class="aprs-signal-meter" style="display: none;">
-                        <div class="aprs-meter-header">
-                            <span class="aprs-meter-label">SIGNAL</span>
-                            <span class="aprs-meter-value" id="aprsMeterValue">--</span>
-                            <span class="aprs-meter-burst" id="aprsMeterBurst" style="display: none;">BURST</span>
-                        </div>
-                        <div class="aprs-meter-bar-container">
-                            <div class="aprs-meter-bar" id="aprsMeterBar"></div>
-                            <div class="aprs-meter-ticks">
-                                <span>0</span>
-                                <span>25</span>
-                                <span>50</span>
-                                <span>75</span>
-                                <span>100</span>
-                            </div>
-                        </div>
-                        <div class="aprs-meter-status" id="aprsMeterStatus">Waiting for signal...</div>
                     </div>
                 </div>

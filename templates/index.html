@@ -726,6 +726,63 @@
 
                 <!-- APRS Visualizations -->
                 <div id="aprsVisuals" style="display: none; flex-direction: column; gap: 10px; flex: 1; padding: 10px;">
+                    <!-- APRS Function Bar -->
+                    <div class="aprs-strip">
+                        <div class="aprs-strip-inner">
+                            <!-- Stats -->
+                            <div class="strip-stat">
+                                <span class="strip-value" id="aprsStripFreq">--</span>
+                                <span class="strip-label">MHz</span>
+                            </div>
+                            <div class="strip-stat">
+                                <span class="strip-value" id="aprsStripStations">0</span>
+                                <span class="strip-label">STATIONS</span>
+                            </div>
+                            <div class="strip-stat">
+                                <span class="strip-value" id="aprsStripPackets">0</span>
+                                <span class="strip-label">PACKETS</span>
+                            </div>
+                            <div class="strip-stat signal-stat" id="aprsStripSignalStat">
+                                <span class="strip-value" id="aprsStripSignal">--</span>
+                                <span class="strip-label">SIGNAL</span>
+                            </div>
+                            <div class="strip-divider"></div>
+                            <!-- Controls -->
+                            <div class="strip-control">
+                                <select id="aprsStripRegion" class="strip-select">
+                                    <option value="north_america">N. America (144.390)</option>
+                                    <option value="europe">Europe (144.800)</option>
+                                    <option value="uk">UK (144.800)</option>
+                                    <option value="australia">Australia (145.175)</option>
+                                    <option value="japan">Japan (144.640)</option>
+                                </select>
+                            </div>
+                            <div class="strip-control">
+                                <span class="strip-input-label">GAIN</span>
+                                <input type="number" id="aprsStripGain" class="strip-input" value="40" min="0" max="50">
+                            </div>
+                            <div class="strip-divider"></div>
+                            <!-- Tool Status Indicators -->
+                            <div class="strip-tools">
+                                <span class="strip-tool" id="aprsStripDirewolf" title="direwolf">DW</span>
+                                <span class="strip-tool" id="aprsStripMultimon" title="multimon-ng">MM</span>
+                            </div>
+                            <div class="strip-divider"></div>
+                            <!-- Actions -->
+                            <button type="button" class="strip-btn primary" id="aprsStripStartBtn" onclick="startAprs()">
+                                ▶ START
+                            </button>
+                            <button type="button" class="strip-btn stop" id="aprsStripStopBtn" onclick="stopAprs()" style="display: none;">
+                                ◼ STOP
+                            </button>
+                            <!-- Status -->
+                            <div class="strip-status">
+                                <div class="status-dot inactive" id="aprsStripDot"></div>
+                                <span id="aprsStripStatus">STANDBY</span>
+                            </div>
+                            <div class="strip-time" id="aprsStripTime">--:--:-- UTC</div>
+                        </div>
+                    </div>
                     <!-- Top row: Map and Station List side by side -->
                     <div style="display: flex; gap: 10px; flex: 1; min-height: 0;">
                         <!-- Map Panel (larger) -->
@@ -5958,28 +6015,29 @@
             fetch('/aprs/tools')
                 .then(r => r.json())
                 .then(data => {
-                    const direwolfStatus = document.getElementById('direwolfStatus');
-                    const multimonStatus = document.getElementById('aprsMultimonStatus');
+                    // Update function bar tool indicators
+                    const direwolfEl = document.getElementById('aprsStripDirewolf');
+                    const multimonEl = document.getElementById('aprsStripMultimon');
 
-                    if (direwolfStatus) {
-                        direwolfStatus.textContent = data.direwolf ? 'OK' : 'Missing';
-                        direwolfStatus.className = 'tool-status ' + (data.direwolf ? 'ok' : 'missing');
+                    if (direwolfEl) {
+                        direwolfEl.className = 'strip-tool' + (data.direwolf ? ' ok' : '');
+                        direwolfEl.title = 'direwolf: ' + (data.direwolf ? 'OK' : 'Missing');
                     }
-                    if (multimonStatus) {
-                        multimonStatus.textContent = data.multimon_ng ? 'OK' : 'Missing';
-                        multimonStatus.className = 'tool-status ' + (data.multimon_ng ? 'ok' : 'missing');
+                    if (multimonEl) {
+                        multimonEl.className = 'strip-tool' + (data.multimon_ng ? ' ok' : '');
+                        multimonEl.title = 'multimon-ng: ' + (data.multimon_ng ? 'OK' : 'Missing');
                     }
                 })
                 .catch(() => {
-                    const direwolfStatus = document.getElementById('direwolfStatus');
-                    const multimonStatus = document.getElementById('aprsMultimonStatus');
-                    if (direwolfStatus) {
-                        direwolfStatus.textContent = 'Error';
-                        direwolfStatus.className = 'tool-status missing';
+                    const direwolfEl = document.getElementById('aprsStripDirewolf');
+                    const multimonEl = document.getElementById('aprsStripMultimon');
+                    if (direwolfEl) {
+                        direwolfEl.className = 'strip-tool';
+                        direwolfEl.title = 'direwolf: Error';
                     }
-                    if (multimonStatus) {
-                        multimonStatus.textContent = 'Error';
-                        multimonStatus.className = 'tool-status missing';
+                    if (multimonEl) {
+                        multimonEl.className = 'strip-tool';
+                        multimonEl.title = 'multimon-ng: Error';
                     }
                 });
         }
@@ -5997,45 +6055,51 @@
                 maxZoom: 19
             }).addTo(aprsMap);
 
-            // Update time display
+            // Update time display (both map header and function bar)
             setInterval(() => {
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('en-US', {hour12: false});
+                const utcStr = now.toUTCString().slice(17, 25) + ' UTC';
+
                 const timeEl = document.getElementById('aprsMapTime');
-                if (timeEl) {
-                    timeEl.textContent = new Date().toLocaleTimeString('en-US', {hour12: false});
-                }
+                if (timeEl) timeEl.textContent = timeStr;
+
+                const stripTimeEl = document.getElementById('aprsStripTime');
+                if (stripTimeEl) stripTimeEl.textContent = utcStr;
             }, 1000);
         }
 
         function updateAprsStatus(state, freq) {
-            const statusBar = document.getElementById('aprsStatusBar');
-            const statusDot = document.getElementById('aprsStatusDot');
-            const statusText = document.getElementById('aprsStatusText');
-            const freqEl = document.getElementById('aprsStatusFreq');
+            // Update function bar status
+            const stripDot = document.getElementById('aprsStripDot');
+            const stripStatus = document.getElementById('aprsStripStatus');
+            const stripFreq = document.getElementById('aprsStripFreq');
 
-            statusBar.style.display = 'block';
-            statusDot.className = 'aprs-status-dot ' + state;
-            statusText.textContent = state.toUpperCase();
-
-            if (freq) {
-                freqEl.textContent = freq + ' MHz';
+            if (stripDot) {
+                stripDot.className = 'status-dot ' + state;
             }
-
-            // Update color based on state
-            if (state === 'listening') {
-                statusText.style.color = 'var(--accent-cyan)';
-            } else if (state === 'tracking') {
-                statusText.style.color = 'var(--accent-green)';
-            } else if (state === 'error') {
-                statusText.style.color = 'var(--accent-red)';
-            } else {
-                statusText.style.color = 'var(--text-muted)';
+            if (stripStatus) {
+                stripStatus.textContent = state.toUpperCase();
+                if (state === 'listening') {
+                    stripStatus.style.color = 'var(--accent-cyan)';
+                } else if (state === 'tracking') {
+                    stripStatus.style.color = 'var(--accent-green)';
+                } else if (state === 'error') {
+                    stripStatus.style.color = 'var(--accent-red)';
+                } else {
+                    stripStatus.style.color = '';
+                }
+            }
+            if (freq && stripFreq) {
+                stripFreq.textContent = freq;
             }
         }
 
         function startAprs() {
-            const region = document.getElementById('aprsRegion').value;
+            // Get values from function bar controls
+            const region = document.getElementById('aprsStripRegion').value;
             const device = getSelectedDevice();
-            const gain = document.getElementById('aprsGain').value;
+            const gain = document.getElementById('aprsStripGain').value;
 
             fetch('/aprs/start', {
                 method: 'POST',
@@ -6048,17 +6112,21 @@
                     isAprsRunning = true;
                     aprsPacketCount = 0;
                     aprsStationCount = 0;
-                    document.getElementById('startAprsBtn').style.display = 'none';
-                    document.getElementById('stopAprsBtn').style.display = 'block';
+                    // Update function bar buttons
+                    document.getElementById('aprsStripStartBtn').style.display = 'none';
+                    document.getElementById('aprsStripStopBtn').style.display = 'inline-block';
+                    // Update map status
                     document.getElementById('aprsMapStatus').textContent = 'TRACKING';
                     document.getElementById('aprsMapStatus').style.color = 'var(--accent-green)';
-                    // Update sidebar status bar
+                    // Update function bar status
                     updateAprsStatus('listening', data.frequency);
-                    document.getElementById('aprsStatusStations').textContent = '0';
-                    document.getElementById('aprsStatusPackets').textContent = '0';
-                    // Show signal meter
-                    document.getElementById('aprsSignalMeter').style.display = 'block';
-                    resetAprsMeter();
+                    // Reset function bar stats
+                    document.getElementById('aprsStripStations').textContent = '0';
+                    document.getElementById('aprsStripPackets').textContent = '0';
+                    document.getElementById('aprsStripSignal').textContent = '--';
+                    // Disable controls while running
+                    document.getElementById('aprsStripRegion').disabled = true;
+                    document.getElementById('aprsStripGain').disabled = true;
                     startAprsMeterCheck();
                     startAprsStream();
                 } else {
@@ -6077,13 +6145,24 @@
                 .then(r => r.json())
                 .then(data => {
                     isAprsRunning = false;
-                    document.getElementById('startAprsBtn').style.display = 'block';
-                    document.getElementById('stopAprsBtn').style.display = 'none';
-                    // Hide sidebar status bar and signal meter
-                    document.getElementById('aprsStatusBar').style.display = 'none';
-                    document.getElementById('aprsSignalMeter').style.display = 'none';
+                    // Update function bar buttons
+                    document.getElementById('aprsStripStartBtn').style.display = 'inline-block';
+                    document.getElementById('aprsStripStopBtn').style.display = 'none';
+                    // Update map status
                     document.getElementById('aprsMapStatus').textContent = 'STANDBY';
                     document.getElementById('aprsMapStatus').style.color = '';
+                    // Reset function bar status
+                    updateAprsStatus('standby');
+                    document.getElementById('aprsStripFreq').textContent = '--';
+                    document.getElementById('aprsStripSignal').textContent = '--';
+                    // Re-enable controls
+                    document.getElementById('aprsStripRegion').disabled = false;
+                    document.getElementById('aprsStripGain').disabled = false;
+                    // Remove signal quality class
+                    const signalStat = document.getElementById('aprsStripSignalStat');
+                    if (signalStat) {
+                        signalStat.classList.remove('good', 'warning', 'poor');
+                    }
                     // Stop meter check interval
                     stopAprsMeterCheck();
                     if (aprsEventSource) {
@@ -6101,17 +6180,17 @@
                 const data = JSON.parse(e.data);
                 if (data.type === 'aprs') {
                     aprsPacketCount++;
+                    // Update map footer and function bar
                     document.getElementById('aprsPacketCount').textContent = aprsPacketCount;
-                    // Update sidebar status bar
-                    document.getElementById('aprsStatusPackets').textContent = aprsPacketCount;
+                    document.getElementById('aprsStripPackets').textContent = aprsPacketCount;
                     // Switch to tracking state on first packet
-                    const dot = document.getElementById('aprsStatusDot');
+                    const dot = document.getElementById('aprsStripDot');
                     if (dot && !dot.classList.contains('tracking')) {
                         updateAprsStatus('tracking');
                     }
                     processAprsPacket(data);
                 } else if (data.type === 'meter') {
-                    // Update signal meter
+                    // Update signal indicator in function bar
                     updateAprsMeter(data.level);
                 }
             };
@@ -6125,59 +6204,41 @@
         // Signal Meter Functions
         function resetAprsMeter() {
             aprsMeterLastUpdate = 0;
-            const bar = document.getElementById('aprsMeterBar');
-            const value = document.getElementById('aprsMeterValue');
-            const burst = document.getElementById('aprsMeterBurst');
-            const status = document.getElementById('aprsMeterStatus');
-            if (bar) {
-                bar.style.width = '0%';
-                bar.classList.remove('no-signal');
-            }
-            if (value) value.textContent = '--';
-            if (burst) burst.style.display = 'none';
-            if (status) {
-                status.textContent = 'Waiting for signal...';
-                status.className = 'aprs-meter-status';
-            }
+            // Reset function bar signal indicator
+            const signalEl = document.getElementById('aprsStripSignal');
+            const signalStat = document.getElementById('aprsStripSignalStat');
+            if (signalEl) signalEl.textContent = '--';
+            if (signalStat) signalStat.classList.remove('good', 'warning', 'poor');
         }
 
         function updateAprsMeter(level) {
             aprsMeterLastUpdate = Date.now();
-            const bar = document.getElementById('aprsMeterBar');
-            const value = document.getElementById('aprsMeterValue');
-            const burst = document.getElementById('aprsMeterBurst');
-            const status = document.getElementById('aprsMeterStatus');
 
-            if (bar) {
-                bar.style.width = level + '%';
-                bar.classList.remove('no-signal');
-            }
-            if (value) value.textContent = level;
+            // Update function bar signal indicator
+            const signalEl = document.getElementById('aprsStripSignal');
+            const signalStat = document.getElementById('aprsStripSignalStat');
 
-            // Show burst indicator for high levels (>70)
-            if (burst) {
-                if (level > 70) {
-                    burst.style.display = 'inline';
-                    // Remove and re-add to trigger animation
-                    burst.style.animation = 'none';
-                    burst.offsetHeight; // Trigger reflow
-                    burst.style.animation = null;
+            if (signalEl) {
+                // Show signal level as bars
+                if (level >= 60) {
+                    signalEl.textContent = '●●●';
+                } else if (level >= 30) {
+                    signalEl.textContent = '●●○';
+                } else if (level >= 10) {
+                    signalEl.textContent = '●○○';
                 } else {
-                    burst.style.display = 'none';
+                    signalEl.textContent = '○○○';
                 }
             }
 
-            // Update status text
-            if (status) {
-                status.className = 'aprs-meter-status active';
-                if (level < 10) {
-                    status.textContent = 'Low signal / noise floor';
-                } else if (level < 30) {
-                    status.textContent = 'Weak signal detected';
-                } else if (level < 60) {
-                    status.textContent = 'Moderate signal';
+            if (signalStat) {
+                signalStat.classList.remove('good', 'warning', 'poor');
+                if (level >= 60) {
+                    signalStat.classList.add('good');
+                } else if (level >= 30) {
+                    signalStat.classList.add('warning');
                 } else {
-                    status.textContent = 'Strong signal / packet burst';
+                    signalStat.classList.add('poor');
                 }
             }
         }
@@ -6187,14 +6248,12 @@
             aprsMeterCheckInterval = setInterval(function() {
                 if (aprsMeterLastUpdate > 0 && (Date.now() - aprsMeterLastUpdate) > APRS_METER_TIMEOUT) {
                     // No meter updates for 5 seconds - show no-signal state
-                    const bar = document.getElementById('aprsMeterBar');
-                    const status = document.getElementById('aprsMeterStatus');
-                    const burst = document.getElementById('aprsMeterBurst');
-                    if (bar) bar.classList.add('no-signal');
-                    if (burst) burst.style.display = 'none';
-                    if (status) {
-                        status.textContent = 'No RF activity / silence';
-                        status.className = 'aprs-meter-status no-signal';
+                    const signalEl = document.getElementById('aprsStripSignal');
+                    const signalStat = document.getElementById('aprsStripSignalStat');
+                    if (signalEl) signalEl.textContent = '○○○';
+                    if (signalStat) {
+                        signalStat.classList.remove('good', 'warning');
+                        signalStat.classList.add('poor');
                     }
                 }
             }, 1000);
@@ -6250,8 +6309,9 @@
             } else {
                 // Create new marker
                 aprsStationCount++;
+                // Update map footer and function bar
                 document.getElementById('aprsStationCount').textContent = aprsStationCount;
-                document.getElementById('aprsStatusStations').textContent = aprsStationCount;
+                document.getElementById('aprsStripStations').textContent = aprsStationCount;
 
                 const icon = L.divIcon({
                     className: 'aprs-marker',

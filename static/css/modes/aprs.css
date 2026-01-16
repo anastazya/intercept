@@ -1,4 +1,201 @@
-/* APRS Status Bar Styles */
+/* APRS Function Bar (Stats Strip) Styles */
+.aprs-strip {
+    background: linear-gradient(180deg, var(--bg-panel) 0%, var(--bg-dark) 100%);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin-bottom: 10px;
+    overflow-x: auto;
+}
+.aprs-strip-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: max-content;
+}
+.aprs-strip .strip-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 4px 10px;
+    background: rgba(74, 158, 255, 0.05);
+    border: 1px solid rgba(74, 158, 255, 0.15);
+    border-radius: 4px;
+    min-width: 55px;
+}
+.aprs-strip .strip-stat:hover {
+    background: rgba(74, 158, 255, 0.1);
+    border-color: rgba(74, 158, 255, 0.3);
+}
+.aprs-strip .strip-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    line-height: 1.2;
+}
+.aprs-strip .strip-label {
+    font-size: 8px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 1px;
+}
+.aprs-strip .strip-divider {
+    width: 1px;
+    height: 28px;
+    background: var(--border-color);
+    margin: 0 4px;
+}
+/* Signal stat coloring */
+.aprs-strip .signal-stat.good .strip-value { color: var(--accent-green); }
+.aprs-strip .signal-stat.warning .strip-value { color: var(--accent-yellow); }
+.aprs-strip .signal-stat.poor .strip-value { color: var(--accent-red); }
+
+/* Controls */
+.aprs-strip .strip-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.aprs-strip .strip-select {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    cursor: pointer;
+}
+.aprs-strip .strip-select:hover {
+    border-color: var(--accent-cyan);
+}
+.aprs-strip .strip-input-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+.aprs-strip .strip-input {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    width: 50px;
+    text-align: center;
+}
+.aprs-strip .strip-input:hover,
+.aprs-strip .strip-input:focus {
+    border-color: var(--accent-cyan);
+    outline: none;
+}
+
+/* Tool Status Indicators */
+.aprs-strip .strip-tools {
+    display: flex;
+    gap: 4px;
+}
+.aprs-strip .strip-tool {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: rgba(255, 59, 48, 0.2);
+    color: var(--accent-red);
+    border: 1px solid rgba(255, 59, 48, 0.3);
+}
+.aprs-strip .strip-tool.ok {
+    background: rgba(0, 255, 136, 0.1);
+    color: var(--accent-green);
+    border-color: rgba(0, 255, 136, 0.3);
+}
+
+/* Buttons */
+.aprs-strip .strip-btn {
+    background: rgba(74, 158, 255, 0.1);
+    border: 1px solid rgba(74, 158, 255, 0.2);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.aprs-strip .strip-btn:hover:not(:disabled) {
+    background: rgba(74, 158, 255, 0.2);
+    border-color: rgba(74, 158, 255, 0.4);
+}
+.aprs-strip .strip-btn.primary {
+    background: linear-gradient(135deg, var(--accent-green) 0%, #10b981 100%);
+    border: none;
+    color: #000;
+}
+.aprs-strip .strip-btn.primary:hover:not(:disabled) {
+    filter: brightness(1.1);
+}
+.aprs-strip .strip-btn.stop {
+    background: linear-gradient(135deg, var(--accent-red) 0%, #dc2626 100%);
+    border: none;
+    color: #fff;
+}
+.aprs-strip .strip-btn.stop:hover:not(:disabled) {
+    filter: brightness(1.1);
+}
+.aprs-strip .strip-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Status indicator */
+.aprs-strip .strip-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.aprs-strip .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+.aprs-strip .status-dot.listening {
+    background: var(--accent-cyan);
+    animation: aprs-strip-pulse 1.5s ease-in-out infinite;
+}
+.aprs-strip .status-dot.tracking {
+    background: var(--accent-green);
+    animation: aprs-strip-pulse 1.5s ease-in-out infinite;
+}
+.aprs-strip .status-dot.error {
+    background: var(--accent-red);
+}
+@keyframes aprs-strip-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 4px 2px currentColor; }
+    50% { opacity: 0.6; box-shadow: none; }
+}
+
+/* Time display */
+.aprs-strip .strip-time {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 4px 8px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+/* APRS Status Bar Styles (Sidebar - legacy) */
 .aprs-status-bar {
     margin-top: 12px;
     padding: 10px;
