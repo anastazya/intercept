@@ -1,5 +1,50 @@
 /* TSCM Styles */
 
+/* TSCM Collapsible Sections */
+.tscm-collapsible {
+    padding: 0 !important;
+    overflow: hidden;
+}
+.tscm-collapsible-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: background 0.2s;
+}
+.tscm-collapsible-header:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+.tscm-collapse-icon {
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+}
+.tscm-collapsible-content {
+    padding: 0 12px 12px 12px;
+}
+.tscm-collapsible.expanded .tscm-collapse-icon {
+    transform: rotate(45deg);
+}
+
+/* TSCM Tool Buttons */
+.tscm-tool-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    min-width: 0;
+}
+.tscm-tool-btn:hover {
+    background: rgba(74, 158, 255, 0.15);
+}
+
 /* TSCM Threat Cards */
 .threat-card {
     display: flex;

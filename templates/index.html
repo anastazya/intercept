@@ -7530,6 +7530,23 @@
             }
         }
 
+        // TSCM collapsible section toggle
+        function toggleTscmSection(contentId) {
+            const content = document.getElementById(contentId);
+            const icon = document.getElementById(contentId + 'Icon');
+            const section = content.closest('.tscm-collapsible');
+
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.textContent = '-';
+                section.classList.add('expanded');
+            } else {
+                content.style.display = 'none';
+                icon.textContent = '+';
+                section.classList.remove('expanded');
+            }
+        }
+
         async function startTscmSweep() {
             const sweepType = document.getElementById('tscmSweepType').value;
             const baselineId = document.getElementById('tscmBaselineSelect').value || null;
