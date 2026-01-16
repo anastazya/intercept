@@ -554,6 +554,11 @@ install_debian_packages() {
   $SUDO apt-get update -y >/dev/null
 
   progress "Installing RTL-SDR"
+  # Handle package conflict between librtlsdr0 and librtlsdr2
+  if dpkg -l | grep -q librtlsdr2; then
+    info "Removing conflicting librtlsdr2 package..."
+    $SUDO apt-get remove -y librtlsdr2 >/dev/null 2>&1 || true
+  fi
   apt_install rtl-sdr
 
   progress "Installing RTL-SDR Blog drivers (V4 support)"
