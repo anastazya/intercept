@@ -126,7 +126,7 @@ const BluetoothMode = (function() {
                     visible = true;
             }
 
-            card.style.display = visible ? 'block' : 'none';
+            card.style.display = visible ? '' : 'none';
         });
 
         // Update visible count

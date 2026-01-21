@@ -3280,17 +3280,28 @@ header h1 .tagline {
 .bt-radar-panel {
     flex: 1;
     min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.bt-radar-panel #btProximityRadar {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .bt-bottom-panels {
     display: flex;
     gap: 12px;
     flex-shrink: 0;
+    max-height: 120px;
 }
 
 .bt-compact-panel {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
 }
 
 /* Bluetooth Device Detail Panel */
