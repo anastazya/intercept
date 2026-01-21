@@ -1243,9 +1243,13 @@ def _run_sweep(
                 try:
                     # Use unified Bluetooth scanner if available
                     if _USE_UNIFIED_BT_SCANNER:
+                        logger.info("TSCM: Using unified BT scanner for snapshot")
                         bt_devices = get_tscm_bluetooth_snapshot(duration=8)
+                        logger.info(f"TSCM: Unified scanner returned {len(bt_devices)} devices")
                     else:
+                        logger.info(f"TSCM: Using legacy BT scanner on {bt_interface}")
                         bt_devices = _scan_bluetooth_devices(bt_interface, duration=8)
+                        logger.info(f"TSCM: Legacy scanner returned {len(bt_devices)} devices")
                     for device in bt_devices:
                         mac = device.get('mac', '')
                         if mac and mac not in all_bt:

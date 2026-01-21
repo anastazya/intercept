@@ -928,15 +928,21 @@ def get_tscm_bluetooth_snapshot(duration: int = 8) -> list[dict]:
         List of device dictionaries in TSCM format.
     """
     import time
+    import logging
+    logger = logging.getLogger('intercept.bluetooth_v2')
 
     scanner = get_bluetooth_scanner()
 
     # Start scan if not running
     if not scanner.is_scanning:
+        logger.info(f"TSCM snapshot: Scanner not running, starting scan for {duration}s")
         scanner.start_scan(mode='auto', duration_s=duration)
         time.sleep(duration + 1)
+    else:
+        logger.info("TSCM snapshot: Scanner already running, getting current devices")
 
     devices = scanner.get_devices()
+    logger.info(f"TSCM snapshot: get_devices() returned {len(devices)} devices")
 
     # Convert to TSCM format with tracker detection data
     tscm_devices = []
