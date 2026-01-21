@@ -355,43 +355,59 @@ class UnifiedWiFiScanner:
 
         airport_path = '/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport'
 
-        result = subprocess.run(
-            [airport_path, '-s'],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                [airport_path, '-s'],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
 
-        if result.returncode != 0:
-            logger.warning(f"airport scan failed: {result.stderr}")
-            return []
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or f"airport returned code {result.returncode}"
+                logger.warning(f"airport scan failed: {error_msg}")
+                raise RuntimeError(f"airport scan failed: {error_msg}")
 
-        return parse_airport_scan(result.stdout)
+            if not result.stdout.strip():
+                logger.warning("airport returned empty output")
+                return []
+
+            return parse_airport_scan(result.stdout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"airport scan timed out after {timeout}s")
+        except FileNotFoundError:
+            raise RuntimeError("airport utility not found")
 
     def _scan_with_nmcli(self, interface: str, timeout: float) -> list[WiFiObservation]:
         """Scan using NetworkManager nmcli."""
         from .parsers.nmcli import parse_nmcli_scan
 
-        # Trigger a rescan first
-        subprocess.run(
-            ['nmcli', 'device', 'wifi', 'rescan', 'ifname', interface],
-            capture_output=True,
-            timeout=timeout / 2,
-        )
+        try:
+            # Trigger a rescan first
+            subprocess.run(
+                ['nmcli', 'device', 'wifi', 'rescan', 'ifname', interface],
+                capture_output=True,
+                timeout=timeout / 2,
+            )
 
-        # Get results
-        result = subprocess.run(
-            ['nmcli', '-t', '-f', 'BSSID,SSID,MODE,CHAN,FREQ,RATE,SIGNAL,SECURITY', 'device', 'wifi', 'list', 'ifname', interface],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+            # Get results
+            result = subprocess.run(
+                ['nmcli', '-t', '-f', 'BSSID,SSID,MODE,CHAN,FREQ,RATE,SIGNAL,SECURITY', 'device', 'wifi', 'list', 'ifname', interface],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
 
-        if result.returncode != 0:
-            logger.warning(f"nmcli scan failed: {result.stderr}")
-            return []
+            if result.returncode != 0:
+                error_msg = result.stderr.strip() or f"nmcli returned code {result.returncode}"
+                logger.warning(f"nmcli scan failed: {error_msg}")
+                raise RuntimeError(f"nmcli scan failed: {error_msg}")
 
-        return parse_nmcli_scan(result.stdout)
+            return parse_nmcli_scan(result.stdout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"nmcli scan timed out after {timeout}s")
+        except FileNotFoundError:
+            raise RuntimeError("nmcli not found (NetworkManager not installed)")
 
     def _scan_with_iw(self, interface: str, timeout: float) -> list[WiFiObservation]:
         """Scan using iw."""
