@@ -22,6 +22,9 @@ from utils.bluetooth import (
     get_bluetooth_scanner,
     check_capabilities,
     RANGE_UNKNOWN,
+    TrackerType,
+    TrackerConfidence,
+    get_tracker_engine,
 )
 from utils.database import get_db
 from utils.sse import format_sse
@@ -351,6 +354,333 @@ def get_device(device_id: str):
     return jsonify(device.to_dict())
 
 
+# =============================================================================
+# TRACKER DETECTION ENDPOINTS (v2)
+# =============================================================================
+
+
+@bluetooth_v2_bp.route('/trackers', methods=['GET'])
+def list_trackers():
+    """
+    List detected tracker devices with enriched tracker data.
+
+    This is the v2 tracker endpoint that provides comprehensive
+    tracker detection results including confidence scores and evidence.
+
+    Query parameters:
+        - min_confidence: Minimum confidence ('high', 'medium', 'low')
+        - max_age: Maximum age in seconds (default: 300)
+        - include_risk: Include risk analysis (default: true)
+
+    Returns:
+        JSON with detected trackers and their analysis.
+    """
+    scanner = get_bluetooth_scanner()
+
+    # Parse query parameters
+    min_confidence = request.args.get('min_confidence', 'low')
+    max_age = request.args.get('max_age', 300, type=float)
+    include_risk = request.args.get('include_risk', 'true').lower() == 'true'
+
+    # Get all devices
+    devices = scanner.get_devices(max_age_seconds=max_age)
+
+    # Filter to only trackers
+    trackers = [d for d in devices if d.is_tracker]
+
+    # Filter by confidence level if specified
+    confidence_order = {'high': 3, 'medium': 2, 'low': 1, 'none': 0}
+    min_conf_level = confidence_order.get(min_confidence.lower(), 1)
+    trackers = [
+        t for t in trackers
+        if confidence_order.get(t.tracker_confidence, 0) >= min_conf_level
+    ]
+
+    # Build response
+    tracker_list = []
+    for device in trackers:
+        tracker_info = {
+            'device_id': device.device_id,
+            'device_key': device.device_key,
+            'address': device.address,
+            'address_type': device.address_type,
+            'name': device.name,
+
+            # Tracker detection details
+            'tracker': {
+                'type': device.tracker_type,
+                'name': device.tracker_name,
+                'confidence': device.tracker_confidence,
+                'confidence_score': round(device.tracker_confidence_score, 2),
+                'evidence': device.tracker_evidence,
+            },
+
+            # Location/proximity
+            'rssi_current': device.rssi_current,
+            'rssi_ema': round(device.rssi_ema, 1) if device.rssi_ema else None,
+            'proximity_band': device.proximity_band,
+            'estimated_distance_m': round(device.estimated_distance_m, 2) if device.estimated_distance_m else None,
+
+            # Timing
+            'first_seen': device.first_seen.isoformat(),
+            'last_seen': device.last_seen.isoformat(),
+            'age_seconds': round(device.age_seconds, 1),
+            'seen_count': device.seen_count,
+            'duration_seconds': round(device.duration_seconds, 1),
+
+            # Status
+            'is_new': device.is_new,
+            'in_baseline': device.in_baseline,
+
+            # Fingerprint for cross-MAC tracking
+            'fingerprint_id': device.payload_fingerprint_id,
+        }
+
+        # Include risk analysis if requested
+        if include_risk:
+            tracker_info['risk_analysis'] = {
+                'risk_score': round(device.risk_score, 2),
+                'risk_factors': device.risk_factors,
+            }
+
+        tracker_list.append(tracker_info)
+
+    # Sort by risk score (highest first), then confidence
+    tracker_list.sort(
+        key=lambda t: (
+            t.get('risk_analysis', {}).get('risk_score', 0),
+            confidence_order.get(t['tracker']['confidence'], 0)
+        ),
+        reverse=True
+    )
+
+    return jsonify({
+        'count': len(tracker_list),
+        'scan_active': scanner.is_scanning,
+        'trackers': tracker_list,
+        'summary': {
+            'high_confidence': sum(1 for t in tracker_list if t['tracker']['confidence'] == 'high'),
+            'medium_confidence': sum(1 for t in tracker_list if t['tracker']['confidence'] == 'medium'),
+            'low_confidence': sum(1 for t in tracker_list if t['tracker']['confidence'] == 'low'),
+            'high_risk': sum(1 for t in tracker_list if t.get('risk_analysis', {}).get('risk_score', 0) >= 0.5),
+        }
+    })
+
+
+@bluetooth_v2_bp.route('/trackers/<device_id>', methods=['GET'])
+def get_tracker_detail(device_id: str):
+    """
+    Get detailed tracker information for investigation.
+
+    Provides comprehensive data about a specific tracker including:
+    - Full tracker detection analysis
+    - Risk assessment with factors
+    - RSSI history and timeline
+    - Raw advertising payload data
+    - Fingerprint information
+
+    Path parameters:
+        - device_id: Device identifier (address:address_type)
+
+    Returns:
+        JSON with full tracker investigation data.
+    """
+    scanner = get_bluetooth_scanner()
+    device = scanner.get_device(device_id)
+
+    if not device:
+        return jsonify({'error': 'Device not found'}), 404
+
+    # Get RSSI history for timeline
+    rssi_history = device.get_rssi_history(max_points=100)
+
+    # Build comprehensive response
+    return jsonify({
+        'device_id': device.device_id,
+        'device_key': device.device_key,
+        'address': device.address,
+        'address_type': device.address_type,
+        'name': device.name,
+        'manufacturer_name': device.manufacturer_name,
+        'manufacturer_id': device.manufacturer_id,
+
+        # Tracker detection
+        'tracker': {
+            'is_tracker': device.is_tracker,
+            'type': device.tracker_type,
+            'name': device.tracker_name,
+            'confidence': device.tracker_confidence,
+            'confidence_score': round(device.tracker_confidence_score, 2),
+            'evidence': device.tracker_evidence,
+        },
+
+        # Risk analysis
+        'risk_analysis': {
+            'risk_score': round(device.risk_score, 2),
+            'risk_factors': device.risk_factors,
+            'warning': 'Risk scores are heuristic indicators only. They do NOT prove malicious intent.',
+        },
+
+        # Fingerprint (for MAC randomization tracking)
+        'fingerprint': {
+            'id': device.payload_fingerprint_id,
+            'stability': round(device.payload_fingerprint_stability, 2),
+            'note': 'Fingerprints help track devices across MAC address changes but are probabilistic.',
+        },
+
+        # Signal data
+        'signal': {
+            'rssi_current': device.rssi_current,
+            'rssi_median': round(device.rssi_median, 1) if device.rssi_median else None,
+            'rssi_ema': round(device.rssi_ema, 1) if device.rssi_ema else None,
+            'rssi_min': device.rssi_min,
+            'rssi_max': device.rssi_max,
+            'rssi_variance': round(device.rssi_variance, 2) if device.rssi_variance else None,
+            'tx_power': device.tx_power,
+        },
+
+        # Proximity
+        'proximity': {
+            'band': device.proximity_band,
+            'estimated_distance_m': round(device.estimated_distance_m, 2) if device.estimated_distance_m else None,
+            'confidence': round(device.distance_confidence, 2),
+        },
+
+        # Timeline / sightings
+        'timeline': {
+            'first_seen': device.first_seen.isoformat(),
+            'last_seen': device.last_seen.isoformat(),
+            'age_seconds': round(device.age_seconds, 1),
+            'duration_seconds': round(device.duration_seconds, 1),
+            'seen_count': device.seen_count,
+            'seen_rate': round(device.seen_rate, 2),
+            'rssi_history': rssi_history,
+        },
+
+        # Raw advertisement data for investigation
+        'raw_data': {
+            'manufacturer_id_hex': f'0x{device.manufacturer_id:04X}' if device.manufacturer_id else None,
+            'manufacturer_data_hex': device.manufacturer_bytes.hex() if device.manufacturer_bytes else None,
+            'service_uuids': device.service_uuids,
+            'service_data': {k: v.hex() for k, v in device.service_data.items()},
+            'appearance': device.appearance,
+        },
+
+        # Heuristics
+        'heuristics': {
+            'is_new': device.is_new,
+            'is_persistent': device.is_persistent,
+            'is_beacon_like': device.is_beacon_like,
+            'is_strong_stable': device.is_strong_stable,
+            'has_random_address': device.has_random_address,
+            'is_randomized_mac': device.is_randomized_mac,
+        },
+
+        # Baseline status
+        'baseline': {
+            'in_baseline': device.in_baseline,
+            'baseline_id': device.baseline_id,
+        },
+    })
+
+
+@bluetooth_v2_bp.route('/diagnostics', methods=['GET'])
+def get_diagnostics():
+    """
+    Get Bluetooth system diagnostics for troubleshooting.
+
+    Returns detailed information about:
+    - Adapter status and capabilities
+    - BlueZ version and DBus access
+    - Permissions and access issues
+    - Available scan backends
+    - Recent errors
+
+    Returns:
+        JSON with diagnostic information.
+    """
+    import os
+    import subprocess
+
+    caps = check_capabilities()
+
+    diagnostics = {
+        'system': {
+            'is_root': os.geteuid() == 0 if hasattr(os, 'geteuid') else False,
+            'platform': os.uname().sysname if hasattr(os, 'uname') else 'unknown',
+        },
+
+        'bluez': {
+            'has_bluez': caps.has_bluez,
+            'version': caps.bluez_version,
+            'has_dbus': caps.has_dbus,
+        },
+
+        'adapters': {
+            'count': len(caps.adapters),
+            'default': caps.default_adapter,
+            'list': caps.adapters,
+        },
+
+        'permissions': {
+            'has_bluetooth_permission': caps.has_bluetooth_permission,
+            'is_soft_blocked': caps.is_soft_blocked,
+            'is_hard_blocked': caps.is_hard_blocked,
+        },
+
+        'backends': {
+            'recommended': caps.recommended_backend,
+            'available': {
+                'dbus': caps.has_dbus and caps.has_bluez,
+                'bleak': caps.has_bleak,
+                'hcitool': caps.has_hcitool,
+                'bluetoothctl': caps.has_bluetoothctl,
+                'btmgmt': caps.has_btmgmt,
+            },
+        },
+
+        'can_scan': caps.can_scan,
+        'issues': caps.issues,
+
+        'recommendations': [],
+    }
+
+    # Add recommendations based on issues
+    if not caps.can_scan:
+        diagnostics['recommendations'].append(
+            'No scanning backends available. Install BlueZ or ensure Bluetooth adapter is present.'
+        )
+
+    if caps.is_soft_blocked:
+        diagnostics['recommendations'].append(
+            'Bluetooth is soft-blocked. Run: sudo rfkill unblock bluetooth'
+        )
+
+    if caps.is_hard_blocked:
+        diagnostics['recommendations'].append(
+            'Bluetooth is hard-blocked (hardware switch). Enable Bluetooth on your device.'
+        )
+
+    if not caps.has_bluetooth_permission and not diagnostics['system']['is_root']:
+        diagnostics['recommendations'].append(
+            'May need elevated permissions for BLE scanning. Try running with sudo or add user to bluetooth group.'
+        )
+
+    if caps.has_dbus and caps.has_bluez and len(caps.adapters) == 0:
+        diagnostics['recommendations'].append(
+            'BlueZ is available but no adapters found. Check if Bluetooth adapter is connected and enabled.'
+        )
+
+    # Check for btmon availability (useful for debugging)
+    try:
+        result = subprocess.run(['which', 'btmon'], capture_output=True, timeout=2)
+        diagnostics['backends']['available']['btmon'] = result.returncode == 0
+    except Exception:
+        diagnostics['backends']['available']['btmon'] = False
+
+    return jsonify(diagnostics)
+
+
 @bluetooth_v2_bp.route('/baseline/set', methods=['POST'])
 def set_baseline():
     """
@@ -608,10 +938,10 @@ def get_tscm_bluetooth_snapshot(duration: int = 8) -> list[dict]:
 
     devices = scanner.get_devices()
 
-    # Convert to TSCM format
+    # Convert to TSCM format with tracker detection data
     tscm_devices = []
     for device in devices:
-        tscm_devices.append({
+        device_data = {
             'mac': device.address,
             'address_type': device.address_type,
             'device_key': device.device_key,
@@ -621,6 +951,8 @@ def get_tscm_bluetooth_snapshot(duration: int = 8) -> list[dict]:
             'rssi_ema': round(device.rssi_ema, 1) if device.rssi_ema else None,
             'type': _classify_device_type(device),
             'manufacturer': device.manufacturer_name,
+            'manufacturer_id': device.manufacturer_id,
+            'manufacturer_data': device.manufacturer_bytes.hex() if device.manufacturer_bytes else None,
             'protocol': device.protocol,
             'first_seen': device.first_seen.isoformat(),
             'last_seen': device.last_seen.isoformat(),
@@ -639,7 +971,34 @@ def get_tscm_bluetooth_snapshot(duration: int = 8) -> list[dict]:
                 'has_random_address': device.has_random_address,
             },
             'in_baseline': device.in_baseline,
-        })
+
+            # Tracker detection data (v2)
+            'tracker': {
+                'is_tracker': device.is_tracker,
+                'type': device.tracker_type,
+                'name': device.tracker_name,
+                'confidence': device.tracker_confidence,
+                'confidence_score': round(device.tracker_confidence_score, 2),
+                'evidence': device.tracker_evidence,
+            },
+
+            # Risk analysis (v2)
+            'risk_analysis': {
+                'risk_score': round(device.risk_score, 2),
+                'risk_factors': device.risk_factors,
+            },
+
+            # Fingerprint for cross-MAC tracking (v2)
+            'fingerprint': {
+                'id': device.payload_fingerprint_id,
+                'stability': round(device.payload_fingerprint_stability, 2),
+            },
+
+            # Service UUIDs for analysis
+            'service_uuids': device.service_uuids,
+        }
+
+        tscm_devices.append(device_data)
 
     return tscm_devices
 

@@ -20,6 +20,12 @@ from .constants import (
     PROXIMITY_UNKNOWN,
 )
 
+# Import tracker types (will be available after tracker_signatures module loads)
+# Use string type hints to avoid circular imports
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .tracker_signatures import TrackerDetectionResult, DeviceFingerprint
+
 
 @dataclass
 class BTObservation:
@@ -146,6 +152,25 @@ class BTDeviceAggregate:
     in_baseline: bool = False
     baseline_id: Optional[int] = None
 
+    # Tracker detection fields
+    is_tracker: bool = False
+    tracker_type: Optional[str] = None  # 'airtag', 'tile', 'samsung_smarttag', etc.
+    tracker_name: Optional[str] = None
+    tracker_confidence: Optional[str] = None  # 'high', 'medium', 'low', 'none'
+    tracker_confidence_score: float = 0.0  # 0.0 to 1.0
+    tracker_evidence: list[str] = field(default_factory=list)
+
+    # Suspicious presence / following heuristics
+    risk_score: float = 0.0  # 0.0 to 1.0
+    risk_factors: list[str] = field(default_factory=list)
+
+    # Payload fingerprint (survives MAC randomization)
+    payload_fingerprint_id: Optional[str] = None
+    payload_fingerprint_stability: float = 0.0
+
+    # Service data (for tracker analysis)
+    service_data: dict[str, bytes] = field(default_factory=dict)
+
     def get_rssi_history(self, max_points: int = 50) -> list[dict]:
         """Get RSSI history for sparkline visualization."""
         if not self.rssi_samples:
@@ -252,6 +277,31 @@ class BTDeviceAggregate:
             # Baseline
             'in_baseline': self.in_baseline,
             'baseline_id': self.baseline_id,
+
+            # Tracker detection
+            'tracker': {
+                'is_tracker': self.is_tracker,
+                'type': self.tracker_type,
+                'name': self.tracker_name,
+                'confidence': self.tracker_confidence,
+                'confidence_score': round(self.tracker_confidence_score, 2),
+                'evidence': self.tracker_evidence,
+            },
+
+            # Suspicious presence analysis
+            'risk_analysis': {
+                'risk_score': round(self.risk_score, 2),
+                'risk_factors': self.risk_factors,
+            },
+
+            # Fingerprint
+            'fingerprint': {
+                'id': self.payload_fingerprint_id,
+                'stability': round(self.payload_fingerprint_stability, 2),
+            },
+
+            # Raw service data for investigation
+            'service_data': {k: v.hex() for k, v in self.service_data.items()},
         }
 
     def to_summary_dict(self) -> dict:
@@ -277,6 +327,14 @@ class BTDeviceAggregate:
             'seen_count': self.seen_count,
             'heuristic_flags': self.heuristic_flags,
             'in_baseline': self.in_baseline,
+            # Tracker info for list view
+            'is_tracker': self.is_tracker,
+            'tracker_type': self.tracker_type,
+            'tracker_name': self.tracker_name,
+            'tracker_confidence': self.tracker_confidence,
+            'tracker_confidence_score': round(self.tracker_confidence_score, 2),
+            'risk_score': round(self.risk_score, 2),
+            'fingerprint_id': self.payload_fingerprint_id,
         }
 
 

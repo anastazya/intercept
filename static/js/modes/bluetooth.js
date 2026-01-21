@@ -109,6 +109,7 @@ const BluetoothMode = (function() {
             const isNew = card.dataset.isNew === 'true';
             const hasName = card.dataset.hasName === 'true';
             const rssi = parseInt(card.dataset.rssi) || -100;
+            const isTracker = card.dataset.isTracker === 'true';
 
             let visible = true;
             switch (currentDeviceFilter) {
@@ -120,6 +121,9 @@ const BluetoothMode = (function() {
                     break;
                 case 'strong':
                     visible = rssi >= -70;
+                    break;
+                case 'trackers':
+                    visible = isTracker;
                     break;
                 case 'all':
                 default:
@@ -321,10 +325,69 @@ const BluetoothMode = (function() {
         const badgesEl = document.getElementById('btDetailBadges');
         let badgesHtml = `<span class="bt-detail-badge ${protocol}">${protocol.toUpperCase()}</span>`;
         badgesHtml += `<span class="bt-detail-badge ${device.in_baseline ? 'baseline' : 'new'}">${device.in_baseline ? '✓ KNOWN' : '● NEW'}</span>`;
+
+        // Tracker badge
+        if (device.is_tracker) {
+            const conf = device.tracker_confidence || 'low';
+            const confClass = conf === 'high' ? 'tracker-high' : conf === 'medium' ? 'tracker-medium' : 'tracker-low';
+            const typeLabel = device.tracker_name || device.tracker_type || 'TRACKER';
+            badgesHtml += `<span class="bt-detail-badge ${confClass}">${escapeHtml(typeLabel)}</span>`;
+        }
+
         flags.forEach(f => {
             badgesHtml += `<span class="bt-detail-badge flag">${f.replace(/_/g, ' ').toUpperCase()}</span>`;
         });
         badgesEl.innerHTML = badgesHtml;
+
+        // Tracker analysis section
+        const trackerSection = document.getElementById('btDetailTrackerAnalysis');
+        if (trackerSection) {
+            if (device.is_tracker) {
+                const confidence = device.tracker_confidence || 'low';
+                const confScore = device.tracker_confidence_score || 0;
+                const riskScore = device.risk_score || 0;
+                const evidence = device.tracker_evidence || [];
+                const riskFactors = device.risk_factors || [];
+
+                let trackerHtml = '<div class="bt-tracker-analysis">';
+                trackerHtml += '<div class="bt-analysis-header">Tracker Detection Analysis</div>';
+
+                // Confidence
+                const confColor = confidence === 'high' ? '#ef4444' : confidence === 'medium' ? '#f97316' : '#eab308';
+                trackerHtml += '<div class="bt-analysis-row"><span class="bt-analysis-label">Confidence:</span><span style="color:' + confColor + ';font-weight:600;">' + confidence.toUpperCase() + ' (' + Math.round(confScore * 100) + '%)</span></div>';
+
+                // Evidence
+                if (evidence.length > 0) {
+                    trackerHtml += '<div class="bt-analysis-section"><div class="bt-analysis-label">Evidence:</div><ul class="bt-evidence-list">';
+                    evidence.forEach(e => {
+                        trackerHtml += '<li>' + escapeHtml(e) + '</li>';
+                    });
+                    trackerHtml += '</ul></div>';
+                }
+
+                // Risk analysis
+                if (riskScore >= 0.1 || riskFactors.length > 0) {
+                    const riskColor = riskScore >= 0.5 ? '#ef4444' : riskScore >= 0.3 ? '#f97316' : '#888';
+                    trackerHtml += '<div class="bt-analysis-row"><span class="bt-analysis-label">Risk Score:</span><span style="color:' + riskColor + ';font-weight:600;">' + Math.round(riskScore * 100) + '%</span></div>';
+                    if (riskFactors.length > 0) {
+                        trackerHtml += '<div class="bt-analysis-section"><div class="bt-analysis-label">Risk Factors:</div><ul class="bt-evidence-list">';
+                        riskFactors.forEach(f => {
+                            trackerHtml += '<li>' + escapeHtml(f) + '</li>';
+                        });
+                        trackerHtml += '</ul></div>';
+                    }
+                }
+
+                trackerHtml += '<div class="bt-analysis-warning">Note: Detection is heuristic-based. Results indicate patterns consistent with tracking devices but cannot prove intent.</div>';
+                trackerHtml += '</div>';
+
+                trackerSection.style.display = 'block';
+                trackerSection.innerHTML = trackerHtml;
+            } else {
+                trackerSection.style.display = 'none';
+                trackerSection.innerHTML = '';
+            }
+        }
 
         // Stats grid
         document.getElementById('btDetailMfr').textContent = device.manufacturer_name || '--';
@@ -671,7 +734,6 @@ const BluetoothMode = (function() {
         deviceStats.trackers = [];
 
         devices.forEach(d => {
-            const name = (d.name || '').toLowerCase();
             const rssi = d.rssi_current;
 
             // Signal strength classification
@@ -681,12 +743,9 @@ const BluetoothMode = (function() {
                 else deviceStats.weak++;
             }
 
-            // Tracker detection - check for known tracker patterns
-            const isTracker = name.includes('tile') || name.includes('airtag') ||
-                             name.includes('smarttag') || name.includes('chipolo') ||
-                             name.includes('tracker') || name.includes('tag');
-
-            if (isTracker) {
+            // Use actual tracker detection from backend (v2)
+            // The is_tracker field comes from the TrackerSignatureEngine
+            if (d.is_tracker === true) {
                 if (!deviceStats.trackers.find(t => t.address === d.address)) {
                     deviceStats.trackers.push(d);
                 }
@@ -714,23 +773,67 @@ const BluetoothMode = (function() {
         if (mediumCount) mediumCount.textContent = deviceStats.medium;
         if (weakCount) weakCount.textContent = deviceStats.weak;
 
-        // Tracker Detection
+        // Tracker Detection - Enhanced display with confidence and evidence
         const trackerList = document.getElementById('btTrackerList');
         if (trackerList) {
             if (devices.size === 0) {
                 trackerList.innerHTML = '<div style="color:#666;padding:10px;text-align:center;font-size:11px;">Start scanning to detect trackers</div>';
             } else if (deviceStats.trackers.length === 0) {
-                trackerList.innerHTML = '<div style="color:#22c55e;padding:10px;text-align:center;font-size:11px;">✓ No known trackers detected</div>';
+                trackerList.innerHTML = '<div style="color:#22c55e;padding:10px;text-align:center;font-size:11px;">No trackers detected</div>';
             } else {
-                trackerList.innerHTML = deviceStats.trackers.map(t => `
-                    <div style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;" onclick="BluetoothMode.selectDevice('${t.device_id}')">
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:#f97316;font-size:11px;">${escapeHtml(t.name || formatDeviceId(t.address))}</span>
-                            <span style="color:#666;font-size:10px;">${t.rssi_current || '--'} dBm</span>
-                        </div>
-                        <div style="font-size:9px;color:#666;font-family:monospace;">${t.address}</div>
-                    </div>
-                `).join('');
+                // Sort by risk score (highest first), then confidence
+                const sortedTrackers = [...deviceStats.trackers].sort((a, b) => {
+                    const riskA = a.risk_score || 0;
+                    const riskB = b.risk_score || 0;
+                    if (riskB !== riskA) return riskB - riskA;
+                    const confA = a.tracker_confidence_score || 0;
+                    const confB = b.tracker_confidence_score || 0;
+                    return confB - confA;
+                });
+
+                trackerList.innerHTML = sortedTrackers.map(t => {
+                    // Get tracker type badge color based on confidence
+                    const confidence = t.tracker_confidence || 'low';
+                    const confColor = confidence === 'high' ? '#ef4444' :
+                                     confidence === 'medium' ? '#f97316' : '#eab308';
+                    const confBg = confidence === 'high' ? 'rgba(239,68,68,0.2)' :
+                                  confidence === 'medium' ? 'rgba(249,115,22,0.2)' : 'rgba(234,179,8,0.2)';
+
+                    // Risk score indicator
+                    const riskScore = t.risk_score || 0;
+                    const riskColor = riskScore >= 0.5 ? '#ef4444' : riskScore >= 0.3 ? '#f97316' : '#666';
+
+                    // Tracker type label
+                    const trackerType = t.tracker_name || t.tracker_type || 'Unknown Tracker';
+
+                    // Build evidence tooltip (first 2 items)
+                    const evidence = (t.tracker_evidence || []).slice(0, 2);
+                    const evidenceHtml = evidence.length > 0
+                        ? '<div style="font-size:9px;color:#888;margin-top:3px;font-style:italic;">' +
+                          evidence.map(e => '• ' + escapeHtml(e)).join('<br>') +
+                          '</div>'
+                        : '';
+
+                    const deviceIdEscaped = escapeHtml(t.device_id).replace(/'/g, "\\'");
+
+                    return '<div class="bt-tracker-item" style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;" onclick="BluetoothMode.selectDevice(\'' + deviceIdEscaped + '\')">' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                            '<div style="display:flex;align-items:center;gap:6px;">' +
+                                '<span style="background:' + confBg + ';color:' + confColor + ';font-size:9px;padding:2px 5px;border-radius:3px;font-weight:600;">' + confidence.toUpperCase() + '</span>' +
+                                '<span style="color:#fff;font-size:11px;">' + escapeHtml(trackerType) + '</span>' +
+                            '</div>' +
+                            '<div style="display:flex;align-items:center;gap:8px;">' +
+                                (riskScore >= 0.3 ? '<span style="color:' + riskColor + ';font-size:9px;font-weight:600;">RISK ' + Math.round(riskScore * 100) + '%</span>' : '') +
+                                '<span style="color:#666;font-size:10px;">' + (t.rssi_current || '--') + ' dBm</span>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div style="display:flex;justify-content:space-between;margin-top:3px;">' +
+                            '<span style="font-size:9px;color:#888;font-family:monospace;">' + t.address + '</span>' +
+                            '<span style="font-size:9px;color:#666;">Seen ' + (t.seen_count || 0) + 'x</span>' +
+                        '</div>' +
+                        evidenceHtml +
+                    '</div>';
+                }).join('');
             }
         }
 
@@ -769,6 +872,10 @@ const BluetoothMode = (function() {
         const inBaseline = device.in_baseline || false;
         const isNew = !inBaseline;
         const hasName = !!device.name;
+        const isTracker = device.is_tracker === true;
+        const trackerType = device.tracker_type;
+        const trackerConfidence = device.tracker_confidence;
+        const riskScore = device.risk_score || 0;
 
         // Calculate RSSI bar width (0-100%)
         // RSSI typically ranges from -100 (weak) to -30 (very strong)
@@ -786,10 +893,37 @@ const BluetoothMode = (function() {
             ? '<span class="bt-proto-badge ble">BLE</span>'
             : '<span class="bt-proto-badge classic">CLASSIC</span>';
 
+        // Tracker badge - show if device is detected as tracker
+        let trackerBadge = '';
+        if (isTracker) {
+            const confColor = trackerConfidence === 'high' ? '#ef4444' :
+                             trackerConfidence === 'medium' ? '#f97316' : '#eab308';
+            const confBg = trackerConfidence === 'high' ? 'rgba(239,68,68,0.15)' :
+                          trackerConfidence === 'medium' ? 'rgba(249,115,22,0.15)' : 'rgba(234,179,8,0.15)';
+            const typeLabel = trackerType === 'airtag' ? 'AirTag' :
+                             trackerType === 'tile' ? 'Tile' :
+                             trackerType === 'samsung_smarttag' ? 'SmartTag' :
+                             trackerType === 'findmy_accessory' ? 'FindMy' :
+                             trackerType === 'chipolo' ? 'Chipolo' : 'TRACKER';
+            trackerBadge = '<span class="bt-tracker-badge" style="background:' + confBg + ';color:' + confColor + ';font-size:9px;padding:1px 4px;border-radius:3px;margin-left:4px;font-weight:600;">' + typeLabel + '</span>';
+        }
+
+        // Risk badge - show if risk score is significant
+        let riskBadge = '';
+        if (riskScore >= 0.3) {
+            const riskColor = riskScore >= 0.5 ? '#ef4444' : '#f97316';
+            riskBadge = '<span class="bt-risk-badge" style="color:' + riskColor + ';font-size:8px;margin-left:4px;font-weight:600;">' + Math.round(riskScore * 100) + '% RISK</span>';
+        }
+
         // Status indicator
-        const statusDot = isNew
-            ? '<span class="bt-status-dot new"></span>'
-            : '<span class="bt-status-dot known"></span>';
+        let statusDot;
+        if (isTracker && trackerConfidence === 'high') {
+            statusDot = '<span class="bt-status-dot tracker" style="background:#ef4444;"></span>';
+        } else if (isNew) {
+            statusDot = '<span class="bt-status-dot new"></span>';
+        } else {
+            statusDot = '<span class="bt-status-dot known"></span>';
+        }
 
         // Build secondary info line
         let secondaryParts = [addr];
@@ -797,11 +931,17 @@ const BluetoothMode = (function() {
         secondaryParts.push('Seen ' + seenCount + '×');
         const secondaryInfo = secondaryParts.join(' · ');
 
-        return '<div class="bt-device-row" data-bt-device-id="' + escapeHtml(device.device_id) + '" data-is-new="' + isNew + '" data-has-name="' + hasName + '" data-rssi="' + (rssi || -100) + '" onclick="BluetoothMode.selectDevice(\'' + deviceIdEscaped + '\')" style="border-left-color:' + rssiColor + ';">' +
+        // Row border color - highlight trackers in red/orange
+        const borderColor = isTracker && trackerConfidence === 'high' ? '#ef4444' :
+                           isTracker ? '#f97316' : rssiColor;
+
+        return '<div class="bt-device-row' + (isTracker ? ' is-tracker' : '') + '" data-bt-device-id="' + escapeHtml(device.device_id) + '" data-is-new="' + isNew + '" data-has-name="' + hasName + '" data-rssi="' + (rssi || -100) + '" data-is-tracker="' + isTracker + '" onclick="BluetoothMode.selectDevice(\'' + deviceIdEscaped + '\')" style="border-left-color:' + borderColor + ';">' +
             '<div class="bt-row-main">' +
                 '<div class="bt-row-left">' +
                     protoBadge +
                     '<span class="bt-device-name">' + name + '</span>' +
+                    trackerBadge +
+                    riskBadge +
                 '</div>' +
                 '<div class="bt-row-right">' +
                     '<div class="bt-rssi-container">' +

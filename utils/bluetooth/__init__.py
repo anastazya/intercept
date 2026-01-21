@@ -36,6 +36,15 @@ from .heuristics import HeuristicsEngine, evaluate_device_heuristics, evaluate_a
 from .models import BTDeviceAggregate, BTObservation, ScanStatus, SystemCapabilities
 from .ring_buffer import RingBuffer, get_ring_buffer, reset_ring_buffer
 from .scanner import BluetoothScanner, get_bluetooth_scanner, reset_bluetooth_scanner
+from .tracker_signatures import (
+    TrackerSignatureEngine,
+    TrackerDetectionResult,
+    TrackerType,
+    TrackerConfidence,
+    DeviceFingerprint,
+    detect_tracker,
+    get_tracker_engine,
+)
 
 __all__ = [
     # Main scanner
@@ -100,4 +109,13 @@ __all__ = [
     'ADDRESS_TYPE_RANDOM_STATIC',
     'ADDRESS_TYPE_RPA',
     'ADDRESS_TYPE_NRPA',
+
+    # Tracker detection
+    'TrackerSignatureEngine',
+    'TrackerDetectionResult',
+    'TrackerType',
+    'TrackerConfidence',
+    'DeviceFingerprint',
+    'detect_tracker',
+    'get_tracker_engine',
 ]

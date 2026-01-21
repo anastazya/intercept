@@ -39,6 +39,11 @@ from .models import BTObservation, BTDeviceAggregate
 from .device_key import generate_device_key, is_randomized_mac
 from .distance import DistanceEstimator, get_distance_estimator
 from .ring_buffer import RingBuffer, get_ring_buffer
+from .tracker_signatures import (
+    TrackerSignatureEngine,
+    get_tracker_engine,
+    TrackerDetectionResult,
+)
 
 
 class DeviceAggregator:
@@ -60,8 +65,14 @@ class DeviceAggregator:
         self._distance_estimator = get_distance_estimator()
         self._ring_buffer = get_ring_buffer()
 
+        # Tracker detection engine
+        self._tracker_engine = get_tracker_engine()
+
         # Device key mapping (device_id -> device_key)
         self._device_keys: dict[str, str] = {}
+
+        # Fingerprint mapping for cross-MAC tracking
+        self._fingerprint_to_devices: dict[str, set[str]] = {}
 
     def ingest(self, observation: BTObservation) -> BTDeviceAggregate:
         """
@@ -165,6 +176,12 @@ class DeviceAggregator:
 
             # Estimate distance and proximity band
             self._update_proximity(device)
+
+            # Run tracker detection
+            self._update_tracker_detection(device, observation)
+
+            # Evaluate suspicious presence heuristics
+            self._update_risk_analysis(device)
 
             return device
 
@@ -290,6 +307,77 @@ class DeviceAggregator:
             rssi_ema=device.rssi_ema,
         )
         device.proximity_band = str(band)
+
+    def _update_tracker_detection(
+        self,
+        device: BTDeviceAggregate,
+        observation: BTObservation,
+    ) -> None:
+        """Run tracker signature detection on a device."""
+        # Prepare service data from observation if available
+        service_data = observation.service_data if observation.service_data else {}
+
+        # Store service data on device for investigation
+        for uuid, data in service_data.items():
+            device.service_data[uuid] = data
+
+        # Run tracker detection
+        result = self._tracker_engine.detect_tracker(
+            address=device.address,
+            address_type=device.address_type,
+            name=device.name,
+            manufacturer_id=device.manufacturer_id,
+            manufacturer_data=device.manufacturer_bytes,
+            service_uuids=device.service_uuids,
+            service_data=service_data,
+            tx_power=device.tx_power,
+        )
+
+        # Update device with detection results
+        device.is_tracker = result.is_tracker
+        device.tracker_type = result.tracker_type.value if result.tracker_type else None
+        device.tracker_name = result.tracker_name
+        device.tracker_confidence = result.confidence.value if result.confidence else None
+        device.tracker_confidence_score = result.confidence_score
+        device.tracker_evidence = result.evidence
+
+        # Generate and store payload fingerprint
+        fingerprint = self._tracker_engine.generate_device_fingerprint(
+            manufacturer_id=device.manufacturer_id,
+            manufacturer_data=device.manufacturer_bytes,
+            service_uuids=device.service_uuids,
+            service_data=service_data,
+            tx_power=device.tx_power,
+            name=device.name,
+        )
+        device.payload_fingerprint_id = fingerprint.fingerprint_id
+        device.payload_fingerprint_stability = fingerprint.stability_confidence
+
+        # Track fingerprint to device mapping
+        if fingerprint.fingerprint_id not in self._fingerprint_to_devices:
+            self._fingerprint_to_devices[fingerprint.fingerprint_id] = set()
+        self._fingerprint_to_devices[fingerprint.fingerprint_id].add(device.device_id)
+
+        # Record sighting for persistence tracking
+        self._tracker_engine.record_sighting(fingerprint.fingerprint_id)
+
+    def _update_risk_analysis(self, device: BTDeviceAggregate) -> None:
+        """Evaluate suspicious presence heuristics for a device."""
+        if not device.payload_fingerprint_id:
+            return
+
+        risk_score, risk_factors = self._tracker_engine.evaluate_suspicious_presence(
+            fingerprint_id=device.payload_fingerprint_id,
+            is_tracker=device.is_tracker,
+            seen_count=device.seen_count,
+            duration_seconds=device.duration_seconds,
+            seen_rate=device.seen_rate,
+            rssi_variance=device.rssi_variance,
+            is_new=device.is_new,
+        )
+
+        device.risk_score = risk_score
+        device.risk_factors = risk_factors
 
     def _merge_device_info(self, device: BTDeviceAggregate, observation: BTObservation) -> None:
         """Merge observation data into device aggregate (prefer non-None values)."""
