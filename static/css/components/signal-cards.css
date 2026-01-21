@@ -1485,3 +1485,301 @@
 .signal-guess-section .signal-guess-popup-explanation {
     color: var(--text-secondary, #aaa);
 }
+
+/* ============================================
+   CLICKABLE CARDS
+   ============================================ */
+.signal-card.signal-card-clickable {
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.signal-card.signal-card-clickable:hover {
+    border-color: var(--accent-cyan, #00d4ff);
+    box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.2);
+}
+
+.signal-card.signal-card-clickable:active {
+    transform: scale(0.995);
+}
+
+/* Floating action buttons for clickable cards */
+.signal-card-actions-float {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    z-index: 2;
+}
+
+.signal-card.signal-card-clickable:hover .signal-card-actions-float {
+    opacity: 1;
+}
+
+.signal-card-actions-float .signal-action-btn {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.signal-card-actions-float .signal-action-btn:hover {
+    color: var(--text-secondary);
+    border-color: var(--border-light);
+    background: var(--bg-tertiary);
+}
+
+/* ============================================
+   SIGNAL DETAILS MODAL
+   ============================================ */
+.signal-details-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.signal-details-modal.show {
+    opacity: 1;
+    visibility: visible;
+}
+
+.signal-details-modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.signal-details-modal-content {
+    position: relative;
+    background: var(--panel-bg, #1a1a2e);
+    border: 1px solid var(--border-color, #333);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.95);
+    transition: transform 0.2s ease;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.signal-details-modal.show .signal-details-modal-content {
+    transform: scale(1);
+}
+
+.signal-details-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color, #333);
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px 12px 0 0;
+}
+
+.signal-details-modal-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent-cyan, #00d4ff);
+}
+
+.signal-details-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted, #888);
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.15s ease;
+}
+
+.signal-details-modal-close:hover {
+    color: var(--accent-red, #ff4444);
+}
+
+.signal-details-modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.signal-details-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color, #333);
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0 0 12px 12px;
+}
+
+.signal-details-copy-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 8px 16px;
+    background: var(--accent-purple, #8a2be2);
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.signal-details-copy-btn:hover {
+    background: var(--accent-cyan, #00d4ff);
+    color: #000;
+}
+
+/* Signal Details Content Sections */
+.signal-details-section {
+    margin-bottom: 20px;
+}
+
+.signal-details-section:last-child {
+    margin-bottom: 0;
+}
+
+.signal-details-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim, #666);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-color, #333);
+}
+
+.signal-details-message {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: var(--text-primary, #e0e0e0);
+    background: var(--bg-secondary, #252525);
+    padding: 12px 14px;
+    border-radius: 6px;
+    word-break: break-word;
+    line-height: 1.5;
+}
+
+.signal-details-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.signal-details-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.signal-details-label {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim, #666);
+}
+
+.signal-details-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-primary, #e0e0e0);
+}
+
+/* Raw data in modal */
+.signal-details-modal .signal-raw-data {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary, #aaa);
+    background: var(--bg-tertiary, #1a1a1a);
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #333);
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* Signal assessment panel in modal */
+.signal-details-modal .signal-assessment {
+    background: var(--bg-secondary, #252525);
+    padding: 14px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.signal-details-modal .signal-assessment-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.signal-details-modal .signal-assessment-text {
+    font-size: 13px;
+    color: var(--text-secondary, #aaa);
+    line-height: 1.4;
+}
+
+.signal-details-modal .signal-assessment-caveat {
+    font-size: 10px;
+    color: var(--text-dim, #666);
+    font-style: italic;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color, #333);
+}
+
+/* Signal guess section in modal */
+.signal-details-modal .signal-guess-section {
+    background: var(--bg-secondary, #252525);
+    padding: 14px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    border: none;
+}
+
+.signal-details-modal .signal-guess-content {
+    margin-top: 8px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 500px) {
+    .signal-details-modal-content {
+        width: 95%;
+        max-height: 90vh;
+    }
+
+    .signal-details-grid {
+        grid-template-columns: 1fr;
+    }
+}

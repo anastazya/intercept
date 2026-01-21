@@ -578,12 +578,15 @@ const SignalCards = (function() {
         const msgType = getMsgTypeLabel(msg);
 
         const card = document.createElement('article');
-        card.className = 'signal-card';
+        card.className = 'signal-card signal-card-clickable';
         card.dataset.status = status;
         card.dataset.type = 'message';
         card.dataset.protocol = protoClass;
         card.dataset.msgType = msgType.toLowerCase();
         if (msg.address) card.dataset.address = msg.address;
+
+        // Store message data for dialog
+        card.dataset.msgData = JSON.stringify(msg);
 
         // Get address stats for display
         const stats = getAddressStats('pager', msg.address);
@@ -610,62 +613,16 @@ const SignalCards = (function() {
                 </div>
                 <div class="signal-message ${isNumeric ? 'numeric' : ''} ${isToneOnly ? 'tone-only' : ''}">${escapeHtml(msg.message || '[No content]')}</div>
             </div>
-            <div class="signal-card-footer">
-                <button class="signal-advanced-toggle" onclick="SignalCards.toggleAdvanced(this)">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M6 9l6 6 6-6"/>
-                    </svg>
-                    Details
-                </button>
-                <div class="signal-card-actions">
-                    ${!isToneOnly ? `<button class="signal-action-btn" onclick="SignalCards.copyMessage(this)">Copy</button>` : ''}
-                    <button class="signal-action-btn" onclick="SignalCards.muteAddress('${escapeHtml(msg.address)}')">Mute</button>
-                </div>
-            </div>
-            <div class="signal-advanced-panel">
-                <div class="signal-advanced-inner">
-                    <div class="signal-advanced-content">
-                        <div class="signal-advanced-section">
-                            <div class="signal-advanced-title">Signal Details</div>
-                            <div class="signal-advanced-grid">
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Protocol</span>
-                                    <span class="signal-advanced-value">${escapeHtml(msg.protocol)}</span>
-                                </div>
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Address</span>
-                                    <span class="signal-advanced-value">${escapeHtml(msg.address)}</span>
-                                </div>
-                                ${msg.function ? `
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Function</span>
-                                    <span class="signal-advanced-value">${escapeHtml(msg.function)}</span>
-                                </div>
-                                ` : ''}
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Type</span>
-                                    <span class="signal-advanced-value">${escapeHtml(msgType)}</span>
-                                </div>
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Seen</span>
-                                    <span class="signal-advanced-value">${seenCount} time${seenCount > 1 ? 's' : ''}</span>
-                                </div>
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Timestamp</span>
-                                    <span class="signal-advanced-value">${escapeHtml(msg.timestamp)}</span>
-                                </div>
-                            </div>
-                        </div>
-                        ${msg.raw ? `
-                        <div class="signal-advanced-section">
-                            <div class="signal-advanced-title">Raw Data</div>
-                            <div class="signal-raw-data">${escapeHtml(msg.raw)}</div>
-                        </div>
-                        ` : ''}
-                    </div>
-                </div>
+            <div class="signal-card-actions-float">
+                ${!isToneOnly ? `<button class="signal-action-btn" onclick="event.stopPropagation(); SignalCards.copyMessage(this)">Copy</button>` : ''}
+                <button class="signal-action-btn" onclick="event.stopPropagation(); SignalCards.muteAddress('${escapeHtml(msg.address)}')">Mute</button>
             </div>
         `;
+
+        // Add click handler to open details dialog
+        card.addEventListener('click', () => {
+            showSignalDetails(card);
+        });
 
         return card;
     }
@@ -817,11 +774,14 @@ const SignalCards = (function() {
         const relativeTime = formatRelativeTime(msg.timestamp);
 
         const card = document.createElement('article');
-        card.className = 'signal-card';
+        card.className = 'signal-card signal-card-clickable';
         card.dataset.status = status;
         card.dataset.type = 'sensor';
         card.dataset.protocol = msg.model || 'unknown';
         if (msg.id) card.dataset.sensorId = msg.id;
+
+        // Store message data for dialog
+        card.dataset.msgData = JSON.stringify(msg);
 
         // Get stats
         const stats = getAddressStats('sensor', msg.id);
@@ -834,12 +794,10 @@ const SignalCards = (function() {
             : '<span class="signal-strength-indicator compact no-data" title="No signal data available">--</span>';
 
         // Signal type guessing based on frequency
-        let signalGuess = null;
         let signalGuessBadge = '';
-        let signalGuessSection = '';
         if (msg.frequency && typeof SignalGuess !== 'undefined') {
             const frequencyHz = parseFloat(msg.frequency) * 1_000_000; // Convert MHz to Hz
-            signalGuess = SignalGuess.guessSignalType({
+            const signalGuess = SignalGuess.guessSignalType({
                 frequency_hz: frequencyHz,
                 modulation: msg.modulation || null,
                 bandwidth_hz: msg.bandwidth ? parseFloat(msg.bandwidth) * 1000 : null,
@@ -850,17 +808,6 @@ const SignalCards = (function() {
             // Create compact badge for header
             if (signalGuess && signalGuess.primary_label !== 'Unknown Signal') {
                 signalGuessBadge = SignalGuess.createCompactBadge(signalGuess).outerHTML;
-            }
-
-            // Create detailed section for advanced panel
-            if (signalGuess) {
-                const guessElement = SignalGuess.createGuessElement(signalGuess, { showAlternatives: true, compact: false });
-                signalGuessSection = `
-                    <div class="signal-advanced-section signal-guess-section">
-                        <div class="signal-advanced-title">Signal Identification</div>
-                        <div class="signal-guess-content"></div>
-                    </div>
-                `;
             }
         }
 
@@ -930,70 +877,15 @@ const SignalCards = (function() {
                     ` : ''}
                 </div>
             </div>
-            <div class="signal-card-footer">
-                <button class="signal-advanced-toggle" onclick="SignalCards.toggleAdvanced(this)">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M6 9l6 6 6-6"/>
-                    </svg>
-                    Details
-                </button>
-                <div class="signal-card-actions">
-                    <button class="signal-action-btn" onclick="SignalCards.muteAddress('${escapeHtml(msg.id)}')">Mute</button>
-                </div>
-            </div>
-            <div class="signal-advanced-panel">
-                <div class="signal-advanced-inner">
-                    <div class="signal-advanced-content">
-                        ${rssi !== null ? createSignalAssessmentPanel(rssi, stats?.lastSeen ? (Date.now() - stats.firstSeen) / 1000 : null, seenCount) : ''}
-                        ${signalGuessSection}
-                        <div class="signal-advanced-section">
-                            <div class="signal-advanced-title">Sensor Details</div>
-                            <div class="signal-advanced-grid">
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Model</span>
-                                    <span class="signal-advanced-value">${escapeHtml(msg.model || 'Unknown')}</span>
-                                </div>
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">ID</span>
-                                    <span class="signal-advanced-value">${escapeHtml(msg.id || 'N/A')}</span>
-                                </div>
-                                ${msg.channel ? `
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Channel</span>
-                                    <span class="signal-advanced-value">${msg.channel}</span>
-                                </div>
-                                ` : ''}
-                                ${msg.frequency ? `
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Frequency</span>
-                                    <span class="signal-advanced-value">${msg.frequency} MHz</span>
-                                </div>
-                                ` : ''}
-                                <div class="signal-advanced-item">
-                                    <span class="signal-advanced-label">Seen</span>
-                                    <span class="signal-advanced-value">${seenCount} time${seenCount > 1 ? 's' : ''}</span>
-                                </div>
-                            </div>
-                        </div>
-                        ${msg.raw ? `
-                        <div class="signal-advanced-section">
-                            <div class="signal-advanced-title">Raw Data</div>
-                            <div class="signal-raw-data">${escapeHtml(typeof msg.raw === 'object' ? JSON.stringify(msg.raw, null, 2) : msg.raw)}</div>
-                        </div>
-                        ` : ''}
-                    </div>
-                </div>
+            <div class="signal-card-actions-float">
+                <button class="signal-action-btn" onclick="event.stopPropagation(); SignalCards.muteAddress('${escapeHtml(msg.id)}')">Mute</button>
             </div>
         `;
 
-        // Populate signal guess content if available
-        if (signalGuess) {
-            const guessContentDiv = card.querySelector('.signal-guess-content');
-            if (guessContentDiv) {
-                const guessElement = SignalGuess.createGuessElement(signalGuess, { showAlternatives: true, compact: false });
-                guessContentDiv.appendChild(guessElement);
-            }
-        }
+        // Add click handler to open details dialog
+        card.addEventListener('click', () => {
+            showSignalDetails(card);
+        });
 
         return card;
     }
@@ -1316,6 +1208,227 @@ const SignalCards = (function() {
         // Populate modal
         modal.querySelector('.station-raw-modal-title').textContent = `Station: ${callsign}`;
         modal.querySelector('.station-raw-data-display').textContent = rawData || 'No raw data available';
+
+        // Show modal
+        modal.classList.add('show');
+    }
+
+    /**
+     * Show signal details dialog for pager/sensor cards
+     */
+    function showSignalDetails(card) {
+        const type = card.dataset.type;
+        const msgData = JSON.parse(card.dataset.msgData || '{}');
+
+        // Create or reuse modal
+        let modal = document.getElementById('signalDetailsModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'signalDetailsModal';
+            modal.className = 'signal-details-modal';
+            modal.innerHTML = `
+                <div class="signal-details-modal-backdrop"></div>
+                <div class="signal-details-modal-content">
+                    <div class="signal-details-modal-header">
+                        <span class="signal-details-modal-title"></span>
+                        <button class="signal-details-modal-close">&times;</button>
+                    </div>
+                    <div class="signal-details-modal-body"></div>
+                    <div class="signal-details-modal-footer">
+                        <button class="signal-details-copy-btn">Copy Raw Data</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            // Close handlers
+            modal.querySelector('.signal-details-modal-backdrop').addEventListener('click', () => {
+                modal.classList.remove('show');
+            });
+            modal.querySelector('.signal-details-modal-close').addEventListener('click', () => {
+                modal.classList.remove('show');
+            });
+            modal.querySelector('.signal-details-copy-btn').addEventListener('click', () => {
+                const rawEl = modal.querySelector('.signal-raw-data');
+                if (rawEl) {
+                    navigator.clipboard.writeText(rawEl.textContent).then(() => {
+                        showToast('Raw data copied to clipboard');
+                    }).catch(() => {
+                        showToast('Failed to copy', 'error');
+                    });
+                }
+            });
+
+            // Close on escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && modal.classList.contains('show')) {
+                    modal.classList.remove('show');
+                }
+            });
+        }
+
+        // Build content based on card type
+        let title = '';
+        let bodyContent = '';
+
+        if (type === 'message') {
+            // Pager message details
+            title = `${escapeHtml(msgData.protocol || 'Pager')} - Address ${escapeHtml(msgData.address || 'Unknown')}`;
+            const stats = getAddressStats('pager', msgData.address);
+            const seenCount = stats ? stats.count : 1;
+            const msgType = getMsgTypeLabel(msgData);
+
+            bodyContent = `
+                <div class="signal-details-section">
+                    <div class="signal-details-title">Message Content</div>
+                    <div class="signal-details-message">${escapeHtml(msgData.message || '[No content]')}</div>
+                </div>
+                <div class="signal-details-section">
+                    <div class="signal-details-title">Signal Details</div>
+                    <div class="signal-details-grid">
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Protocol</span>
+                            <span class="signal-details-value">${escapeHtml(msgData.protocol || 'Unknown')}</span>
+                        </div>
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Address</span>
+                            <span class="signal-details-value">${escapeHtml(msgData.address || 'Unknown')}</span>
+                        </div>
+                        ${msgData.function ? `
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Function</span>
+                            <span class="signal-details-value">${escapeHtml(msgData.function)}</span>
+                        </div>
+                        ` : ''}
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Type</span>
+                            <span class="signal-details-value">${escapeHtml(msgType)}</span>
+                        </div>
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Seen</span>
+                            <span class="signal-details-value">${seenCount} time${seenCount > 1 ? 's' : ''}</span>
+                        </div>
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Timestamp</span>
+                            <span class="signal-details-value">${escapeHtml(msgData.timestamp || 'Unknown')}</span>
+                        </div>
+                    </div>
+                </div>
+                ${msgData.raw ? `
+                <div class="signal-details-section">
+                    <div class="signal-details-title">Raw Data</div>
+                    <pre class="signal-raw-data">${escapeHtml(msgData.raw)}</pre>
+                </div>
+                ` : ''}
+            `;
+        } else if (type === 'sensor') {
+            // 433MHz sensor details
+            title = `${escapeHtml(msgData.model || 'Sensor')} - ID ${escapeHtml(msgData.id || 'Unknown')}`;
+            const stats = getAddressStats('sensor', msgData.id);
+            const seenCount = stats ? stats.count : 1;
+            const rssi = msgData.rssi || msgData.signal_strength || msgData.snr || msgData.noise || null;
+
+            // Signal assessment section
+            let signalAssessment = '';
+            if (rssi !== null) {
+                signalAssessment = createSignalAssessmentPanel(rssi, stats?.lastSeen ? (Date.now() - stats.firstSeen) / 1000 : null, seenCount);
+            }
+
+            // Signal guess section
+            let signalGuessHtml = '';
+            if (msgData.frequency && typeof SignalGuess !== 'undefined') {
+                const frequencyHz = parseFloat(msgData.frequency) * 1_000_000;
+                const signalGuess = SignalGuess.guessSignalType({
+                    frequency_hz: frequencyHz,
+                    modulation: msgData.modulation || null,
+                    bandwidth_hz: msgData.bandwidth ? parseFloat(msgData.bandwidth) * 1000 : null,
+                    rssi_dbm: rssi,
+                    region: 'UK/EU'
+                });
+                if (signalGuess) {
+                    const guessElement = SignalGuess.createGuessElement(signalGuess, { showAlternatives: true, compact: false });
+                    signalGuessHtml = `
+                        <div class="signal-details-section signal-guess-section">
+                            <div class="signal-details-title">Signal Identification</div>
+                            <div class="signal-guess-content">${guessElement.outerHTML}</div>
+                        </div>
+                    `;
+                }
+            }
+
+            // Sensor readings
+            let sensorReadings = '';
+            const readings = [];
+            if (msgData.temperature !== undefined) readings.push(`<div class="signal-details-item"><span class="signal-details-label">Temperature</span><span class="signal-details-value">${msgData.temperature}°${msgData.temperature_unit || 'F'}</span></div>`);
+            if (msgData.humidity !== undefined) readings.push(`<div class="signal-details-item"><span class="signal-details-label">Humidity</span><span class="signal-details-value">${msgData.humidity}%</span></div>`);
+            if (msgData.battery !== undefined) readings.push(`<div class="signal-details-item"><span class="signal-details-label">Battery</span><span class="signal-details-value">${msgData.battery}</span></div>`);
+            if (msgData.pressure !== undefined) readings.push(`<div class="signal-details-item"><span class="signal-details-label">Pressure</span><span class="signal-details-value">${msgData.pressure} ${msgData.pressure_unit || 'hPa'}</span></div>`);
+            if (msgData.wind_speed !== undefined) readings.push(`<div class="signal-details-item"><span class="signal-details-label">Wind Speed</span><span class="signal-details-value">${msgData.wind_speed} ${msgData.wind_unit || 'mph'}</span></div>`);
+            if (msgData.rain !== undefined) readings.push(`<div class="signal-details-item"><span class="signal-details-label">Rain</span><span class="signal-details-value">${msgData.rain} ${msgData.rain_unit || 'mm'}</span></div>`);
+            if (msgData.state !== undefined) readings.push(`<div class="signal-details-item"><span class="signal-details-label">State</span><span class="signal-details-value">${escapeHtml(msgData.state)}</span></div>`);
+
+            if (readings.length > 0) {
+                sensorReadings = `
+                    <div class="signal-details-section">
+                        <div class="signal-details-title">Sensor Readings</div>
+                        <div class="signal-details-grid">${readings.join('')}</div>
+                    </div>
+                `;
+            }
+
+            bodyContent = `
+                ${signalAssessment}
+                ${signalGuessHtml}
+                ${sensorReadings}
+                <div class="signal-details-section">
+                    <div class="signal-details-title">Sensor Details</div>
+                    <div class="signal-details-grid">
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Model</span>
+                            <span class="signal-details-value">${escapeHtml(msgData.model || 'Unknown')}</span>
+                        </div>
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">ID</span>
+                            <span class="signal-details-value">${escapeHtml(msgData.id || 'N/A')}</span>
+                        </div>
+                        ${msgData.channel ? `
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Channel</span>
+                            <span class="signal-details-value">${msgData.channel}</span>
+                        </div>
+                        ` : ''}
+                        ${msgData.frequency ? `
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Frequency</span>
+                            <span class="signal-details-value">${msgData.frequency} MHz</span>
+                        </div>
+                        ` : ''}
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Seen</span>
+                            <span class="signal-details-value">${seenCount} time${seenCount > 1 ? 's' : ''}</span>
+                        </div>
+                        <div class="signal-details-item">
+                            <span class="signal-details-label">Timestamp</span>
+                            <span class="signal-details-value">${escapeHtml(msgData.timestamp || 'Unknown')}</span>
+                        </div>
+                    </div>
+                </div>
+                ${msgData.raw ? `
+                <div class="signal-details-section">
+                    <div class="signal-details-title">Raw Data</div>
+                    <pre class="signal-raw-data">${escapeHtml(typeof msgData.raw === 'object' ? JSON.stringify(msgData.raw, null, 2) : msgData.raw)}</pre>
+                </div>
+                ` : ''}
+            `;
+        }
+
+        // Populate modal
+        modal.querySelector('.signal-details-modal-title').textContent = title;
+        modal.querySelector('.signal-details-modal-body').innerHTML = bodyContent;
+
+        // Show/hide copy button based on whether there's raw data
+        const copyBtn = modal.querySelector('.signal-details-copy-btn');
+        copyBtn.style.display = (msgData.raw) ? '' : 'none';
 
         // Show modal
         modal.classList.add('show');
@@ -1785,6 +1898,7 @@ const SignalCards = (function() {
         isAddressMuted,
         showOnMap,
         showStationRawData,
+        showSignalDetails,
         showToast,
 
         // Filter bar
