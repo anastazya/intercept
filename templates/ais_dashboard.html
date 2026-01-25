@@ -78,7 +78,11 @@
                 </div>
                 <div class="selected-info" id="selectedInfo">
                     <div class="no-vessel">
-                        <div class="no-vessel-icon">&#128674;</div>
+                        <div class="no-vessel-icon">
+                            <svg width="32" height="32" viewBox="0 0 24 24" style="opacity: 0.5;">
+                                <path fill="currentColor" d="M12 2L8 6V18L10 20H14L16 18V6L12 2Z"/>
+                            </svg>
+                        </div>
                         <div>Select a vessel</div>
                     </div>
                 </div>
@@ -204,34 +208,48 @@
         let messageRateInterval = null;
         let lastMessageCount = 0;
 
-        // Ship type to icon mapping
-        const SHIP_ICONS = {
-            30: '&#128031;', // Fishing
-            31: '&#128674;', // Towing
-            32: '&#128674;', // Towing
-            36: '&#9973;',   // Sailing
-            37: '&#9973;',   // Pleasure craft
-            60: '&#128674;', // Passenger
-            61: '&#128674;', // Passenger
-            62: '&#128674;', // Passenger
-            63: '&#128674;', // Passenger
-            64: '&#128674;', // Passenger
-            65: '&#128674;', // Passenger
-            66: '&#128674;', // Passenger
-            67: '&#128674;', // Passenger
-            68: '&#128674;', // Passenger
-            69: '&#128674;', // Passenger
-            70: '&#128674;', // Cargo
-            71: '&#128674;', // Cargo - hazardous A
-            72: '&#128674;', // Cargo - hazardous B
-            73: '&#128674;', // Cargo - hazardous C
-            74: '&#128674;', // Cargo - hazardous D
-            80: '&#128674;', // Tanker
-            81: '&#128674;', // Tanker - hazardous A
-            82: '&#128674;', // Tanker - hazardous B
-            83: '&#128674;', // Tanker - hazardous C
-            84: '&#128674;', // Tanker - hazardous D
-            default: '&#128674;' // Generic ship
+        // Vessel SVG icon paths (top-down view, pointing up)
+        const VESSEL_ICONS = {
+            // Generic cargo/container ship - pointed bow, rectangular hull
+            cargo: 'M12 2L8 6V18L10 20H14L16 18V6L12 2ZM10 8H14V16H10V8Z',
+            // Tanker - rounded bow, long hull
+            tanker: 'M12 2C10 2 8 4 8 6V18C8 19 9 20 10 20H14C15 20 16 19 16 18V6C16 4 14 2 12 2ZM10 8H14V16H10V8Z',
+            // Passenger/cruise - multiple decks indicated
+            passenger: 'M12 2L8 5V18L10 20H14L16 18V5L12 2ZM9 7H15V10H9V7ZM9 11H15V14H9V11ZM9 15H15V18H9V15Z',
+            // Tug - small, compact, powerful
+            tug: 'M12 4L9 7V16L10 18H14L15 16V7L12 4ZM10 9H14V14H10V9Z',
+            // Fishing vessel - with mast/outriggers
+            fishing: 'M12 2L12 5L8 8V17L10 19H14L16 17V8L12 5ZM6 10L8 12V15L6 13V10ZM18 10V13L16 15V12L18 10ZM10 10H14V15H10V10Z',
+            // Sailing vessel - sail shape
+            sailing: 'M12 2L12 6L8 10V18L10 20H14L16 18V10L12 6ZM12 3L16 8H12V3ZM10 11H14V17H10V11Z',
+            // Military - angular, aggressive bow
+            military: 'M12 1L7 6V8L8 9V18L10 20H14L16 18V9L17 8V6L12 1ZM10 10H14V16H10V10Z',
+            // High speed craft - sleek, pointed
+            hsc: 'M12 1L9 5V18L10 20H14L15 18V5L12 1ZM10 7H14V17H10V7Z',
+            // Search & rescue - distinctive cross marking
+            sar: 'M12 2L8 6V18L10 20H14L16 18V6L12 2ZM11 8H13V11H16V13H13V16H11V13H8V11H11V8Z',
+            // Pilot vessel
+            pilot: 'M12 3L9 6V17L10 19H14L15 17V6L12 3ZM10 8H14V15H10V8ZM11 9V10H13V9H11Z',
+            // Law enforcement
+            law: 'M12 2L8 6V18L10 20H14L16 18V6L12 2ZM10 8H14V10H10V8ZM11 11H13V16H11V11Z',
+            // Generic vessel (default)
+            default: 'M12 2L8 6V18L10 20H14L16 18V6L12 2Z'
+        };
+
+        // Vessel type colors
+        const VESSEL_COLORS = {
+            cargo: '#00d4ff',      // Cyan
+            tanker: '#ff6b35',     // Orange
+            passenger: '#a855f7',  // Purple
+            tug: '#fbbf24',        // Yellow
+            fishing: '#22c55e',    // Green
+            sailing: '#60a5fa',    // Light blue
+            military: '#ef4444',   // Red
+            hsc: '#f472b6',        // Pink
+            sar: '#ff0000',        // Bright red
+            pilot: '#ffffff',      // White
+            law: '#3b82f6',        // Blue
+            default: '#00d4ff'     // Cyan
         };
 
         // Ship type categories
@@ -255,8 +273,50 @@
             return 'Other';
         }
 
-        function getShipIcon(type) {
-            return SHIP_ICONS[type] || SHIP_ICONS.default;
+        // Get vessel icon type from AIS ship type code
+        function getVesselIconType(type) {
+            if (!type) return 'default';
+            if (type === 30) return 'fishing';
+            if (type >= 31 && type <= 32) return 'tug';
+            if (type === 35) return 'military';
+            if (type >= 36 && type <= 37) return 'sailing';
+            if (type >= 40 && type < 50) return 'hsc';
+            if (type === 50) return 'pilot';
+            if (type === 51) return 'sar';
+            if (type === 52) return 'tug';
+            if (type === 55) return 'law';
+            if (type >= 60 && type < 70) return 'passenger';
+            if (type >= 70 && type < 80) return 'cargo';
+            if (type >= 80 && type < 90) return 'tanker';
+            return 'default';
+        }
+
+        // Create SVG vessel marker icon
+        function createVesselMarkerIcon(rotation, vesselType, isSelected = false) {
+            const path = VESSEL_ICONS[vesselType] || VESSEL_ICONS.default;
+            const color = VESSEL_COLORS[vesselType] || VESSEL_COLORS.default;
+            const size = 24;
+            const glowColor = isSelected ? 'rgba(255,255,255,0.8)' : color;
+            const glowSize = isSelected ? '8px' : '4px';
+
+            return L.divIcon({
+                className: 'vessel-marker' + (isSelected ? ' selected' : ''),
+                html: `<svg width="${size}" height="${size}" viewBox="0 0 24 24" style="transform: rotate(${rotation}deg); filter: drop-shadow(0 0 ${glowSize} ${glowColor});">
+                    <path fill="${color}" d="${path}"/>
+                </svg>`,
+                iconSize: [size, size],
+                iconAnchor: [size/2, size/2]
+            });
+        }
+
+        // Legacy function for vessel list icons (returns SVG string)
+        function getShipIconSvg(type, size = 18) {
+            const vesselType = getVesselIconType(type);
+            const path = VESSEL_ICONS[vesselType] || VESSEL_ICONS.default;
+            const color = VESSEL_COLORS[vesselType] || VESSEL_COLORS.default;
+            return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" style="vertical-align: middle;">
+                <path fill="${color}" d="${path}"/>
+            </svg>`;
         }
 
         // Navigation status text
@@ -544,20 +604,9 @@
             if (!vessel.lat || !vessel.lon) return;
 
             const heading = vessel.heading || vessel.course || 0;
-            const icon = getShipIcon(vessel.ship_type);
-
-            const markerHtml = `
-                <div class="vessel-marker-inner" style="transform: rotate(${heading}deg);">
-                    ${icon}
-                </div>
-            `;
-
-            const divIcon = L.divIcon({
-                className: 'vessel-marker' + (mmsi === selectedMmsi ? ' selected' : ''),
-                html: markerHtml,
-                iconSize: [24, 24],
-                iconAnchor: [12, 12]
-            });
+            const vesselType = getVesselIconType(vessel.ship_type);
+            const isSelected = mmsi === selectedMmsi;
+            const divIcon = createVesselMarkerIcon(heading, vesselType, isSelected);
 
             if (markers[mmsi]) {
                 markers[mmsi].setLatLng([vessel.lat, vessel.lon]);
@@ -573,13 +622,17 @@
         }
 
         function selectVessel(mmsi) {
+            const prevSelected = selectedMmsi;
             selectedMmsi = mmsi;
 
-            // Update marker styles
-            Object.keys(markers).forEach(m => {
-                const el = markers[m].getElement();
-                if (el) {
-                    el.querySelector('.vessel-marker-inner')?.parentElement?.classList.toggle('selected', m === mmsi);
+            // Update marker icons for previous and new selection
+            [prevSelected, mmsi].forEach(m => {
+                if (m && vessels[m] && markers[m]) {
+                    const vessel = vessels[m];
+                    const heading = vessel.heading || vessel.course || 0;
+                    const vesselType = getVesselIconType(vessel.ship_type);
+                    const isSelected = m === mmsi;
+                    markers[m].setIcon(createVesselMarkerIcon(heading, vesselType, isSelected));
                 }
             });
 
@@ -595,13 +648,13 @@
 
         function showVesselDetails(vessel) {
             const container = document.getElementById('selectedInfo');
-            const icon = getShipIcon(vessel.ship_type);
+            const iconSvg = getShipIconSvg(vessel.ship_type, 28);
             const category = getShipCategory(vessel.ship_type);
             const navStatus = NAV_STATUS[vessel.nav_status] || vessel.nav_status_text || 'Unknown';
 
             container.innerHTML = `
                 <div class="vessel-header">
-                    <div class="vessel-icon">${icon}</div>
+                    <div class="vessel-icon">${iconSvg}</div>
                     <div>
                         <div class="vessel-name">${vessel.name || 'Unknown Vessel'}</div>
                         <div class="vessel-mmsi">MMSI: ${vessel.mmsi}</div>
@@ -676,12 +729,12 @@
             }
 
             container.innerHTML = vesselArray.map(v => {
-                const icon = getShipIcon(v.ship_type);
+                const iconSvg = getShipIconSvg(v.ship_type, 20);
                 const category = getShipCategory(v.ship_type);
                 return `
                     <div class="vessel-item ${v.mmsi === selectedMmsi ? 'selected' : ''}"
                          data-mmsi="${v.mmsi}" onclick="selectVessel('${v.mmsi}')">
-                        <div class="vessel-item-icon">${icon}</div>
+                        <div class="vessel-item-icon">${iconSvg}</div>
                         <div class="vessel-item-info">
                             <div class="vessel-item-name">${v.name || 'Unknown'}</div>
                             <div class="vessel-item-type">${category} | ${v.mmsi}</div>

@@ -495,9 +495,8 @@ body {
 }
 
 .no-vessel-icon {
-    font-size: 36px;
     margin-bottom: 10px;
-    opacity: 0.5;
+    color: var(--accent-cyan);
 }
 
 .vessel-header {
@@ -508,7 +507,9 @@ body {
 }
 
 .vessel-icon {
-    font-size: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .vessel-name {
@@ -595,7 +596,10 @@ body {
 }
 
 .vessel-item-icon {
-    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
 }
 
 .vessel-item-info {
@@ -747,19 +751,12 @@ body {
     border: none;
 }
 
-.vessel-marker-inner {
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    filter: drop-shadow(0 0 2px rgba(0,0,0,0.8));
-    transition: transform 0.3s ease;
+.vessel-marker svg {
+    transition: filter 0.2s ease;
 }
 
-.vessel-marker.selected .vessel-marker-inner {
-    filter: drop-shadow(0 0 6px var(--accent-cyan));
+.vessel-marker.selected svg {
+    filter: drop-shadow(0 0 8px rgba(255,255,255,0.8)) !important;
 }
 
 /* Range rings */
