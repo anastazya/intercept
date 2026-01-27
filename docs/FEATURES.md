@@ -165,6 +165,35 @@ Technical Surveillance Countermeasures (TSCM) screening for detecting wireless s
 - No cryptographic de-randomization
 - Passive screening only (no active probing by default)
 
+## Remote Agents (Distributed SIGINT)
+
+Deploy lightweight sensor nodes across multiple locations and aggregate data to a central controller.
+
+### Architecture
+- **Hub-and-spoke model** - Central controller with multiple remote agents
+- **Push and Pull modes** - Agents can push data automatically or respond to on-demand requests
+- **API key authentication** - Secure communication between agents and controller
+
+### Agent Features
+- **Standalone deployment** - Run on Raspberry Pi, mini PCs, or any Linux device with SDR
+- **All modes supported** - Pager, sensor, ADS-B, AIS, WiFi, Bluetooth, and more
+- **GPS integration** - Automatic location tagging from USB GPS receivers
+- **Multi-SDR support** - Run multiple modes simultaneously on agents with multiple SDRs
+- **Capability discovery** - Controller auto-detects available modes and devices
+
+### Controller Features
+- **Agent management UI** - Register, test, and remove agents from `/controller/manage`
+- **Real-time status** - Health monitoring with online/offline indicators
+- **Unified data stream** - Aggregate data from all agents via SSE
+- **Dashboard integration** - Agent selector in ADS-B, AIS, and main dashboards
+- **Device conflict detection** - Smart warnings when SDR is in use
+
+### Use Cases
+- **Wide-area monitoring** - Cover larger geographic areas with distributed sensors
+- **Remote installations** - Deploy sensors in locations without direct access
+- **Redundancy** - Multiple nodes for reliable coverage
+- **Triangulation** - Use multiple GPS-enabled agents for signal location
+
 ## User Interface
 
 - **Mode-specific header stats** - real-time badges showing key metrics per mode

@@ -130,6 +130,58 @@ docker compose up -d
 3. Choose a category (Amateur, Weather, ISS, Starlink, etc.)
 4. Select satellites to add
 
+## Remote Agents (Distributed SIGINT)
+
+Deploy lightweight sensor nodes across multiple locations and aggregate data to a central controller.
+
+### Setting Up an Agent
+
+1. **Install INTERCEPT** on the remote machine
+2. **Create config file** (`intercept_agent.cfg`):
+   ```ini
+   [agent]
+   name = sensor-node-1
+   port = 8020
+
+   [controller]
+   url = http://192.168.1.100:5050
+   api_key = your-secret-key
+   push_enabled = true
+
+   [modes]
+   pager = true
+   sensor = true
+   adsb = true
+   ```
+3. **Start the agent**:
+   ```bash
+   python intercept_agent.py --config intercept_agent.cfg
+   ```
+
+### Registering Agents in the Controller
+
+1. Navigate to `/controller/manage` in the main INTERCEPT instance
+2. Enter agent details:
+   - **Name**: Must match config file (e.g., `sensor-node-1`)
+   - **Base URL**: Agent address (e.g., `http://192.168.1.50:8020`)
+   - **API Key**: Must match config file
+3. Click "Register Agent"
+4. Use "Test" to verify connectivity
+
+### Using Remote Agents
+
+Once registered, agents appear in mode dropdowns:
+
+1. **Select agent** from the dropdown in supported modes
+2. **Start mode** - Commands are proxied to the remote agent
+3. **View data** - Data streams back to your browser via SSE
+
+### Multi-Agent Streaming
+
+Enable "Show All Agents" to aggregate data from all registered agents simultaneously.
+
+For complete documentation, see [Distributed Agents Guide](DISTRIBUTED_AGENTS.md).
+
 ## Configuration
 
 INTERCEPT can be configured via environment variables:

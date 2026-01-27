@@ -37,6 +37,7 @@ Support the developer of this open-source project
 - **WiFi Scanning** - Monitor mode reconnaissance via aircrack-ng
 - **Bluetooth Scanning** - Device discovery and tracker detection
 - **Spy Stations** - Number stations and diplomatic HF network database
+- **Remote Agents** - Distributed SIGINT with remote sensor nodes
 
 ---
 
@@ -114,6 +115,7 @@ Most features work with a basic RTL-SDR dongle (RTL2832U + R820T2).
 ## Documentation
 
 - [Usage Guide](docs/USAGE.md) - Detailed instructions for each mode
+- [Distributed Agents](docs/DISTRIBUTED_AGENTS.md) - Remote sensor node deployment
 - [Hardware Guide](docs/HARDWARE.md) - SDR hardware and advanced setup
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 - [Security](docs/SECURITY.md) - Network security and best practices
