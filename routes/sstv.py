@@ -359,6 +359,74 @@ def iss_schedule():
         }), 500
 
 
+@sstv_bp.route('/iss-position')
+def iss_position():
+    """
+    Get current ISS position.
+
+    Query parameters:
+        latitude: Observer latitude (optional, for elevation calc)
+        longitude: Observer longitude (optional, for elevation calc)
+
+    Returns:
+        JSON with ISS current position.
+    """
+    lat = request.args.get('latitude', type=float)
+    lon = request.args.get('longitude', type=float)
+
+    try:
+        from skyfield.api import load, wgs84, EarthSatellite
+        from data.satellites import TLE_SATELLITES
+
+        # Get ISS TLE
+        iss_tle = TLE_SATELLITES.get('ISS')
+        if not iss_tle:
+            return jsonify({
+                'status': 'error',
+                'message': 'ISS TLE data not available'
+            }), 500
+
+        ts = load.timescale()
+        satellite = EarthSatellite(iss_tle[1], iss_tle[2], iss_tle[0], ts)
+
+        now = ts.now()
+        geocentric = satellite.at(now)
+        subpoint = wgs84.subpoint(geocentric)
+
+        result = {
+            'status': 'ok',
+            'lat': float(subpoint.latitude.degrees),
+            'lon': float(subpoint.longitude.degrees),
+            'altitude': float(subpoint.elevation.km),
+            'timestamp': now.utc_datetime().isoformat()
+        }
+
+        # If observer location provided, calculate elevation/azimuth
+        if lat is not None and lon is not None:
+            observer = wgs84.latlon(lat, lon)
+            diff = satellite - observer
+            topocentric = diff.at(now)
+            alt, az, distance = topocentric.altaz()
+            result['elevation'] = float(alt.degrees)
+            result['azimuth'] = float(az.degrees)
+            result['distance'] = float(distance.km)
+
+        return jsonify(result)
+
+    except ImportError:
+        return jsonify({
+            'status': 'error',
+            'message': 'skyfield library not installed'
+        }), 503
+
+    except Exception as e:
+        logger.error(f"Error getting ISS position: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 @sstv_bp.route('/decode-file', methods=['POST'])
 def decode_file():
     """

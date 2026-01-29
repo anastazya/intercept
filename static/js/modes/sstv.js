@@ -180,20 +180,11 @@ const SSTV = (function() {
         const storedLon = localStorage.getItem('observerLon') || -0.1278;
 
         try {
-            const response = await fetch('/satellite/position', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    latitude: parseFloat(storedLat),
-                    longitude: parseFloat(storedLon),
-                    satellites: ['ISS']
-                })
-            });
-
+            const response = await fetch(`/sstv/iss-position?latitude=${storedLat}&longitude=${storedLon}`);
             const data = await response.json();
 
-            if (data.status === 'success' && data.positions?.length > 0) {
-                issPosition = data.positions[0];
+            if (data.status === 'ok') {
+                issPosition = data;
                 updateIssDisplay();
                 renderGlobe();
             }
