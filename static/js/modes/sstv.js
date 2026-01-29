@@ -498,28 +498,35 @@ const SSTV = (function() {
             ctx.stroke();
         }
 
-        // Draw ISS position - always at center since globe rotates to it
+        // Draw ISS position
         if (issPosition) {
             const issLat = issPosition.lat;
-            // ISS is at center horizontally
-            const point = projectPoint(issLat, 0, cx, cy, radius, 0);
+            const issLon = issPosition.lon;
+            // Project ISS using same rotation as continents
+            const point = projectPoint(issLat, issLon, cx, cy, radius, globeRotation);
 
             if (point) {
                 const x = point.x;
                 const y = point.y;
 
-                // ISS orbit trail (behind it)
+                // ISS orbit trail (where it's been)
+                // ISS orbit is inclined at 51.6 degrees
                 ctx.strokeStyle = 'rgba(0, 212, 255, 0.3)';
                 ctx.lineWidth = 2;
                 ctx.setLineDash([4, 4]);
                 ctx.beginPath();
-                for (let trailLon = -60; trailLon <= 0; trailLon += 3) {
-                    // Approximate orbit inclination of 51.6 degrees
-                    const trailLat = issLat + Math.sin(trailLon * Math.PI / 180) * 10;
-                    const trailPoint = projectPoint(trailLat, trailLon, cx, cy, radius, 0);
+                let trailStarted = false;
+                for (let offset = -60; offset <= 0; offset += 3) {
+                    // Calculate trail position accounting for orbital inclination
+                    const trailLon = issLon + offset;
+                    // Approximate latitude change based on orbit inclination (51.6°)
+                    const orbitPhase = (offset / 360) * 2 * Math.PI;
+                    const trailLat = issLat - Math.sin(orbitPhase) * 20;
+                    const trailPoint = projectPoint(trailLat, trailLon, cx, cy, radius, globeRotation);
                     if (trailPoint) {
-                        if (trailLon === -60) {
+                        if (!trailStarted) {
                             ctx.moveTo(trailPoint.x, trailPoint.y);
+                            trailStarted = true;
                         } else {
                             ctx.lineTo(trailPoint.x, trailPoint.y);
                         }
