@@ -7590,12 +7590,19 @@
             const initialZoom = (aprsUserLocation.lat || gpsLastPosition?.latitude) ? 8 : 4;
 
             aprsMap = L.map('aprsMap').setView([initialLat, initialLon], initialZoom);
+            window.aprsMap = aprsMap;
 
-            // Dark themed map tiles
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png?v=2', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-                maxZoom: 19
-            }).addTo(aprsMap);
+            // Use settings manager for tile layer (allows runtime changes)
+            if (typeof Settings !== 'undefined' && Settings.createTileLayer) {
+                Settings.createTileLayer().addTo(aprsMap);
+                Settings.registerMap(aprsMap);
+            } else {
+                L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                    maxZoom: 19,
+                    subdomains: 'abcd'
+                }).addTo(aprsMap);
+            }
 
             // Add user marker if GPS position is already available
             if (gpsConnected && gpsLastPosition && gpsLastPosition.latitude && gpsLastPosition.longitude) {
@@ -8494,11 +8501,19 @@
                 zoomControl: true,
                 attributionControl: false
             });
+            window.groundTrackMap = groundTrackMap;
 
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png?v=2', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-                maxZoom: 19
-            }).addTo(groundTrackMap);
+            // Use settings manager for tile layer (allows runtime changes)
+            if (typeof Settings !== 'undefined' && Settings.createTileLayer) {
+                Settings.createTileLayer().addTo(groundTrackMap);
+                Settings.registerMap(groundTrackMap);
+            } else {
+                L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                    maxZoom: 19,
+                    subdomains: 'abcd'
+                }).addTo(groundTrackMap);
+            }
 
             // Add observer marker
             const lat = parseFloat(document.getElementById('obsLat').value) || 51.5;

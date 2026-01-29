@@ -20,13 +20,13 @@ const Settings = {
             subdomains: 'abc'
         },
         cartodb_dark: {
-            url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png?v=2',
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            url: 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
             subdomains: 'abcd'
         },
         cartodb_light: {
-            url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            url: 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
             subdomains: 'abcd'
         },
         esri_world: {
@@ -35,6 +35,9 @@ const Settings = {
             subdomains: null
         }
     },
+
+    // Registry of maps that can be updated
+    _registeredMaps: [],
 
     // Current settings cache
     _cache: {},
@@ -178,7 +181,44 @@ const Settings = {
             };
         }
 
-        return this.tileProviders[provider] || this.tileProviders.openstreetmap;
+        return this.tileProviders[provider] || this.tileProviders.cartodb_dark;
+    },
+
+    /**
+     * Register a map to receive tile updates when settings change
+     * @param {L.Map} map - Leaflet map instance
+     */
+    registerMap(map) {
+        if (map && typeof map.eachLayer === 'function' && !this._registeredMaps.includes(map)) {
+            this._registeredMaps.push(map);
+        }
+    },
+
+    /**
+     * Unregister a map
+     * @param {L.Map} map - Leaflet map instance
+     */
+    unregisterMap(map) {
+        const idx = this._registeredMaps.indexOf(map);
+        if (idx > -1) {
+            this._registeredMaps.splice(idx, 1);
+        }
+    },
+
+    /**
+     * Create a tile layer using current settings
+     * @returns {L.TileLayer} Configured tile layer
+     */
+    createTileLayer() {
+        const config = this.getTileConfig();
+        const options = {
+            attribution: config.attribution,
+            maxZoom: 19
+        };
+        if (config.subdomains) {
+            options.subdomains = config.subdomains;
+        }
+        return L.tileLayer(config.url, options);
     },
 
     /**
@@ -277,22 +317,30 @@ const Settings = {
     },
 
     /**
-     * Update map tiles if a map exists
+     * Update map tiles on all known maps
      */
     _updateMapTiles() {
-        // Look for common map variable names
-        const maps = [
+        // Combine registered maps with common window map variables
+        const windowMaps = [
             window.map,
             window.leafletMap,
             window.aprsMap,
-            window.adsbMap
+            window.adsbMap,
+            window.radarMap,
+            window.vesselMap,
+            window.groundMap,
+            window.groundTrackMap,
+            window.meshMap
         ].filter(m => m && typeof m.eachLayer === 'function');
 
-        if (maps.length === 0) return;
+        // Combine with registered maps, removing duplicates
+        const allMaps = [...new Set([...this._registeredMaps, ...windowMaps])];
+
+        if (allMaps.length === 0) return;
 
         const config = this.getTileConfig();
 
-        maps.forEach(map => {
+        allMaps.forEach(map => {
             // Remove existing tile layers
             map.eachLayer(layer => {
                 if (layer instanceof L.TileLayer) {
@@ -302,7 +350,8 @@ const Settings = {
 
             // Add new tile layer
             const options = {
-                attribution: config.attribution
+                attribution: config.attribution,
+                maxZoom: 19
             };
             if (config.subdomains) {
                 options.subdomains = config.subdomains;

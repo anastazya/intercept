@@ -92,12 +92,19 @@ const Meshtastic = (function() {
         const defaultLon = -98.5795;
 
         meshMap = L.map('meshMap').setView([defaultLat, defaultLon], 4);
+        window.meshMap = meshMap;
 
-        // Dark themed map tiles
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png?v=2', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-            maxZoom: 19
-        }).addTo(meshMap);
+        // Use settings manager for tile layer (allows runtime changes)
+        if (typeof Settings !== 'undefined' && Settings.createTileLayer) {
+            Settings.createTileLayer().addTo(meshMap);
+            Settings.registerMap(meshMap);
+        } else {
+            L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                maxZoom: 19,
+                subdomains: 'abcd'
+            }).addTo(meshMap);
+        }
 
         // Handle resize
         setTimeout(() => {

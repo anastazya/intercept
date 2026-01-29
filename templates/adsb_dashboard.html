@@ -2340,10 +2340,18 @@ sudo make install</code>
                 maxZoom: 15
             });
 
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png?v=2', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-                maxZoom: 19
-            }).addTo(radarMap);
+            // Use settings manager for tile layer (allows runtime changes)
+            window.radarMap = radarMap;
+            if (typeof Settings !== 'undefined' && Settings.createTileLayer) {
+                Settings.createTileLayer().addTo(radarMap);
+                Settings.registerMap(radarMap);
+            } else {
+                L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+                    maxZoom: 19,
+                    subdomains: 'abcd'
+                }).addTo(radarMap);
+            }
 
             // Draw range rings after map is ready
             setTimeout(() => drawRangeRings(), 100);
