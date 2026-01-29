@@ -33,13 +33,29 @@ const Meshtastic = (function() {
      * Setup event delegation for dynamically created elements
      */
     function setupEventDelegation() {
-        // Handle traceroute button clicks in Leaflet popups
+        // Handle button clicks in Leaflet popups and elsewhere
         document.addEventListener('click', function(e) {
             const tracerouteBtn = e.target.closest('.mesh-traceroute-btn');
             if (tracerouteBtn) {
                 const nodeId = tracerouteBtn.dataset.nodeId;
                 if (nodeId) {
                     sendTraceroute(nodeId);
+                }
+            }
+
+            const positionBtn = e.target.closest('.mesh-position-btn');
+            if (positionBtn) {
+                const nodeId = positionBtn.dataset.nodeId;
+                if (nodeId) {
+                    requestPosition(nodeId);
+                }
+            }
+
+            const qrBtn = e.target.closest('.mesh-qr-btn');
+            if (qrBtn) {
+                const channelIndex = qrBtn.dataset.channelIndex;
+                if (channelIndex !== undefined) {
+                    showChannelQR(parseInt(channelIndex, 10));
                 }
             }
         });
@@ -380,6 +396,7 @@ const Meshtastic = (function() {
                     <div class="mesh-channel-badges">
                         <span class="mesh-channel-badge ${roleBadge}">${ch.role || 'SECONDARY'}</span>
                         <span class="mesh-channel-badge ${encBadge}">${encText}</span>
+                        <button class="mesh-qr-btn" data-channel-index="${ch.index}" title="Generate QR Code">QR</button>
                         <button class="mesh-channel-configure" onclick="Meshtastic.openChannelModal(${ch.index})">Configure</button>
                     </div>
                 </div>
@@ -647,7 +664,18 @@ const Meshtastic = (function() {
             envHtml += '</div>';
         }
 
-        // Build popup content
+        // Build popup content with action buttons
+        let actionButtons = '';
+        if (!isLocal) {
+            actionButtons = `
+                <div style="margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap;">
+                    <button class="mesh-traceroute-btn" data-node-id="${nodeId}">Traceroute</button>
+                    <button class="mesh-position-btn" data-node-id="${nodeId}">Request Position</button>
+                    <button class="mesh-telemetry-btn" onclick="Meshtastic.showTelemetryChart('${nodeId}')">Telemetry</button>
+                </div>
+            `;
+        }
+
         const popupContent = `
             <div style="min-width: 150px;">
                 <strong style="color: var(--accent-cyan);">${node.long_name || shortName}</strong><br>
@@ -660,7 +688,7 @@ const Meshtastic = (function() {
                 ${node.last_heard ? `<span style="color: var(--text-dim);">Last heard:</span> ${new Date(node.last_heard).toLocaleTimeString()}<br>` : ''}
                 ${telemetryHtml}
                 ${envHtml}
-                ${!isLocal ? `<button class="mesh-traceroute-btn" data-node-id="${nodeId}">Traceroute</button>` : ''}
+                ${actionButtons}
             </div>
         `;
 
@@ -1453,6 +1481,721 @@ const Meshtastic = (function() {
         return null;
     }
 
+    /**
+     * Request position from a specific node
+     */
+    async function requestPosition(nodeId) {
+        if (!nodeId) return;
+
+        try {
+            const response = await fetch('/meshtastic/position/request', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ node_id: nodeId })
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'sent') {
+                showNotification('Meshtastic', `Position requested from ${nodeId}`);
+                // Refresh nodes after a delay to get updated position
+                setTimeout(loadNodes, 5000);
+            } else {
+                showStatusMessage(data.message || 'Failed to request position', 'error');
+            }
+        } catch (err) {
+            console.error('Position request error:', err);
+            showStatusMessage('Error requesting position: ' + err.message, 'error');
+        }
+    }
+
+    /**
+     * Check firmware version and show update status
+     */
+    async function checkFirmware() {
+        try {
+            const response = await fetch('/meshtastic/firmware/check');
+            const data = await response.json();
+
+            if (data.status === 'ok') {
+                showFirmwareModal(data);
+            } else {
+                showStatusMessage(data.message || 'Failed to check firmware', 'error');
+            }
+        } catch (err) {
+            console.error('Firmware check error:', err);
+            showStatusMessage('Error checking firmware: ' + err.message, 'error');
+        }
+    }
+
+    /**
+     * Show firmware information modal
+     */
+    function showFirmwareModal(info) {
+        let modal = document.getElementById('meshFirmwareModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'meshFirmwareModal';
+            modal.className = 'signal-details-modal';
+            document.body.appendChild(modal);
+        }
+
+        const updateBadge = info.update_available
+            ? '<span class="mesh-badge mesh-badge-warning">Update Available</span>'
+            : '<span class="mesh-badge mesh-badge-success">Up to Date</span>';
+
+        modal.innerHTML = `
+            <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeFirmwareModal()"></div>
+            <div class="signal-details-modal-content">
+                <div class="signal-details-modal-header">
+                    <h3>Firmware Information</h3>
+                    <button class="signal-details-modal-close" onclick="Meshtastic.closeFirmwareModal()">&times;</button>
+                </div>
+                <div class="signal-details-modal-body">
+                    <div class="signal-details-section">
+                        <div class="signal-details-title">Current Version</div>
+                        <p style="color: var(--text-secondary); font-size: 14px;">
+                            ${info.current_version || 'Unknown'}
+                        </p>
+                    </div>
+                    <div class="signal-details-section">
+                        <div class="signal-details-title">Latest Version</div>
+                        <p style="color: var(--text-secondary); font-size: 14px;">
+                            ${info.latest_version || 'Unknown'} ${updateBadge}
+                        </p>
+                    </div>
+                    ${info.release_url ? `
+                    <div class="signal-details-section">
+                        <a href="${info.release_url}" target="_blank" rel="noopener" class="preset-btn" style="display: inline-block; text-decoration: none;">
+                            View Release Notes
+                        </a>
+                    </div>
+                    ` : ''}
+                    ${info.error ? `
+                    <div class="signal-details-section">
+                        <p style="color: var(--status-error); font-size: 12px;">
+                            Note: ${info.error}
+                        </p>
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
+        modal.classList.add('show');
+    }
+
+    /**
+     * Close firmware modal
+     */
+    function closeFirmwareModal() {
+        const modal = document.getElementById('meshFirmwareModal');
+        if (modal) modal.classList.remove('show');
+    }
+
+    /**
+     * Show QR code for a channel
+     */
+    async function showChannelQR(channelIndex) {
+        let modal = document.getElementById('meshQRModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'meshQRModal';
+            modal.className = 'signal-details-modal';
+            document.body.appendChild(modal);
+        }
+
+        const channel = channels.find(ch => ch.index === channelIndex);
+        const channelName = channel?.name || `Channel ${channelIndex}`;
+
+        // Show loading state
+        modal.innerHTML = `
+            <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeQRModal()"></div>
+            <div class="signal-details-modal-content">
+                <div class="signal-details-modal-header">
+                    <h3>Channel QR Code</h3>
+                    <button class="signal-details-modal-close" onclick="Meshtastic.closeQRModal()">&times;</button>
+                </div>
+                <div class="signal-details-modal-body">
+                    <div style="text-align: center; padding: 20px;">
+                        <div class="mesh-traceroute-spinner"></div>
+                        <p style="color: var(--text-dim); margin-top: 10px;">Generating QR code...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        modal.classList.add('show');
+
+        try {
+            const response = await fetch(`/meshtastic/channels/${channelIndex}/qr`);
+
+            if (response.ok) {
+                const blob = await response.blob();
+                const imageUrl = URL.createObjectURL(blob);
+
+                modal.innerHTML = `
+                    <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeQRModal()"></div>
+                    <div class="signal-details-modal-content">
+                        <div class="signal-details-modal-header">
+                            <h3>Channel QR Code</h3>
+                            <button class="signal-details-modal-close" onclick="Meshtastic.closeQRModal()">&times;</button>
+                        </div>
+                        <div class="signal-details-modal-body" style="text-align: center;">
+                            <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 15px;">
+                                ${escapeHtml(channelName)}
+                            </p>
+                            <img src="${imageUrl}" alt="Channel QR Code" style="max-width: 256px; background: white; padding: 10px; border-radius: 8px;">
+                            <p style="color: var(--text-dim); font-size: 11px; margin-top: 15px;">
+                                Scan with the Meshtastic app to join this channel
+                            </p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                const data = await response.json();
+                throw new Error(data.message || 'Failed to generate QR code');
+            }
+        } catch (err) {
+            console.error('QR generation error:', err);
+            modal.innerHTML = `
+                <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeQRModal()"></div>
+                <div class="signal-details-modal-content">
+                    <div class="signal-details-modal-header">
+                        <h3>Channel QR Code</h3>
+                        <button class="signal-details-modal-close" onclick="Meshtastic.closeQRModal()">&times;</button>
+                    </div>
+                    <div class="signal-details-modal-body">
+                        <p style="color: var(--status-error);">
+                            Error: ${escapeHtml(err.message)}
+                        </p>
+                        <p style="color: var(--text-dim); font-size: 11px; margin-top: 10px;">
+                            Make sure the qrcode library is installed: pip install qrcode[pil]
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    /**
+     * Close QR modal
+     */
+    function closeQRModal() {
+        const modal = document.getElementById('meshQRModal');
+        if (modal) modal.classList.remove('show');
+    }
+
+    /**
+     * Load and display telemetry history for a node
+     */
+    async function showTelemetryChart(nodeId, hours = 24) {
+        let modal = document.getElementById('meshTelemetryModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'meshTelemetryModal';
+            modal.className = 'signal-details-modal';
+            document.body.appendChild(modal);
+        }
+
+        // Show loading
+        modal.innerHTML = `
+            <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeTelemetryModal()"></div>
+            <div class="signal-details-modal-content" style="max-width: 600px;">
+                <div class="signal-details-modal-header">
+                    <h3>Telemetry History</h3>
+                    <button class="signal-details-modal-close" onclick="Meshtastic.closeTelemetryModal()">&times;</button>
+                </div>
+                <div class="signal-details-modal-body">
+                    <div style="text-align: center; padding: 20px;">
+                        <div class="mesh-traceroute-spinner"></div>
+                        <p style="color: var(--text-dim); margin-top: 10px;">Loading telemetry data...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        modal.classList.add('show');
+
+        try {
+            const response = await fetch(`/meshtastic/telemetry/history?node_id=${encodeURIComponent(nodeId)}&hours=${hours}`);
+            const data = await response.json();
+
+            if (data.status === 'ok') {
+                renderTelemetryCharts(modal, nodeId, data.data, hours);
+            } else {
+                throw new Error(data.message || 'Failed to load telemetry');
+            }
+        } catch (err) {
+            console.error('Telemetry load error:', err);
+            modal.querySelector('.signal-details-modal-body').innerHTML = `
+                <p style="color: var(--status-error);">Error: ${escapeHtml(err.message)}</p>
+            `;
+        }
+    }
+
+    /**
+     * Render telemetry charts
+     */
+    function renderTelemetryCharts(modal, nodeId, data, hours) {
+        if (!data || data.length === 0) {
+            modal.querySelector('.signal-details-modal-body').innerHTML = `
+                <p style="color: var(--text-dim); text-align: center; padding: 20px;">
+                    No telemetry data available for this node in the last ${hours} hours.
+                </p>
+            `;
+            return;
+        }
+
+        // Build charts for available metrics
+        let chartsHtml = `
+            <div class="mesh-telemetry-header">
+                <span>Node: ${escapeHtml(nodeId)}</span>
+                <span style="color: var(--text-dim);">${data.length} data points</span>
+            </div>
+        `;
+
+        // Battery chart
+        const batteryData = data.filter(p => p.battery_level !== null);
+        if (batteryData.length > 0) {
+            chartsHtml += renderSimpleChart('Battery Level', batteryData, 'battery_level', '%', 0, 100);
+        }
+
+        // Voltage chart
+        const voltageData = data.filter(p => p.voltage !== null);
+        if (voltageData.length > 0) {
+            chartsHtml += renderSimpleChart('Voltage', voltageData, 'voltage', 'V', null, null);
+        }
+
+        // Temperature chart
+        const tempData = data.filter(p => p.temperature !== null);
+        if (tempData.length > 0) {
+            chartsHtml += renderSimpleChart('Temperature', tempData, 'temperature', '°C', null, null);
+        }
+
+        // Humidity chart
+        const humidityData = data.filter(p => p.humidity !== null);
+        if (humidityData.length > 0) {
+            chartsHtml += renderSimpleChart('Humidity', humidityData, 'humidity', '%', 0, 100);
+        }
+
+        modal.querySelector('.signal-details-modal-body').innerHTML = chartsHtml;
+    }
+
+    /**
+     * Render a simple SVG line chart
+     */
+    function renderSimpleChart(title, data, field, unit, minY, maxY) {
+        if (data.length < 2) {
+            return `
+                <div class="mesh-telemetry-chart">
+                    <div class="mesh-telemetry-chart-title">${title}</div>
+                    <p style="color: var(--text-dim); font-size: 11px;">Not enough data points</p>
+                </div>
+            `;
+        }
+
+        // Extract values
+        const values = data.map(p => p[field]);
+        const timestamps = data.map(p => new Date(p.timestamp));
+
+        // Calculate bounds
+        const min = minY !== null ? minY : Math.min(...values) * 0.95;
+        const max = maxY !== null ? maxY : Math.max(...values) * 1.05;
+        const range = max - min || 1;
+
+        // Chart dimensions
+        const width = 500;
+        const height = 100;
+        const padding = { left: 40, right: 10, top: 10, bottom: 20 };
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
+
+        // Build path
+        const points = values.map((v, i) => {
+            const x = padding.left + (i / (values.length - 1)) * chartWidth;
+            const y = padding.top + chartHeight - ((v - min) / range) * chartHeight;
+            return `${x},${y}`;
+        });
+        const pathD = 'M' + points.join(' L');
+
+        // Current value
+        const currentValue = values[values.length - 1];
+
+        return `
+            <div class="mesh-telemetry-chart">
+                <div class="mesh-telemetry-chart-title">
+                    ${title}
+                    <span class="mesh-telemetry-current">${currentValue.toFixed(1)}${unit}</span>
+                </div>
+                <svg viewBox="0 0 ${width} ${height}" class="mesh-telemetry-svg">
+                    <!-- Y axis labels -->
+                    <text x="${padding.left - 5}" y="${padding.top + 5}" class="mesh-chart-label" text-anchor="end">${max.toFixed(0)}</text>
+                    <text x="${padding.left - 5}" y="${height - padding.bottom}" class="mesh-chart-label" text-anchor="end">${min.toFixed(0)}</text>
+                    <!-- Grid lines -->
+                    <line x1="${padding.left}" y1="${padding.top}" x2="${width - padding.right}" y2="${padding.top}" class="mesh-chart-grid"/>
+                    <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" class="mesh-chart-grid"/>
+                    <!-- Data line -->
+                    <path d="${pathD}" class="mesh-chart-line" fill="none"/>
+                </svg>
+            </div>
+        `;
+    }
+
+    /**
+     * Close telemetry modal
+     */
+    function closeTelemetryModal() {
+        const modal = document.getElementById('meshTelemetryModal');
+        if (modal) modal.classList.remove('show');
+    }
+
+    /**
+     * Show network topology (neighbors)
+     */
+    async function showNetworkTopology() {
+        let modal = document.getElementById('meshNetworkModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'meshNetworkModal';
+            modal.className = 'signal-details-modal';
+            document.body.appendChild(modal);
+        }
+
+        // Show loading
+        modal.innerHTML = `
+            <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeNetworkModal()"></div>
+            <div class="signal-details-modal-content" style="max-width: 700px;">
+                <div class="signal-details-modal-header">
+                    <h3>Network Topology</h3>
+                    <button class="signal-details-modal-close" onclick="Meshtastic.closeNetworkModal()">&times;</button>
+                </div>
+                <div class="signal-details-modal-body">
+                    <div style="text-align: center; padding: 20px;">
+                        <div class="mesh-traceroute-spinner"></div>
+                        <p style="color: var(--text-dim); margin-top: 10px;">Loading neighbor data...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        modal.classList.add('show');
+
+        try {
+            const response = await fetch('/meshtastic/neighbors');
+            const data = await response.json();
+
+            if (data.status === 'ok') {
+                renderNetworkTopology(modal, data.neighbors);
+            } else {
+                throw new Error(data.message || 'Failed to load neighbors');
+            }
+        } catch (err) {
+            console.error('Network topology error:', err);
+            modal.querySelector('.signal-details-modal-body').innerHTML = `
+                <p style="color: var(--status-error);">Error: ${escapeHtml(err.message)}</p>
+            `;
+        }
+    }
+
+    /**
+     * Render network topology visualization
+     */
+    function renderNetworkTopology(modal, neighbors) {
+        if (!neighbors || Object.keys(neighbors).length === 0) {
+            modal.querySelector('.signal-details-modal-body').innerHTML = `
+                <p style="color: var(--text-dim); text-align: center; padding: 20px;">
+                    No neighbor information available yet.<br>
+                    <span style="font-size: 11px;">Neighbor data is collected from NEIGHBOR_INFO_APP packets.</span>
+                </p>
+            `;
+            return;
+        }
+
+        // Build a simple list view of neighbors
+        let html = '<div class="mesh-network-list">';
+
+        for (const [nodeId, neighborList] of Object.entries(neighbors)) {
+            html += `
+                <div class="mesh-network-node">
+                    <div class="mesh-network-node-header">
+                        <span class="mesh-network-node-id">${escapeHtml(nodeId)}</span>
+                        <span class="mesh-network-node-count">${neighborList.length} neighbors</span>
+                    </div>
+                    <div class="mesh-network-neighbors">
+            `;
+
+            neighborList.forEach(neighbor => {
+                const snrClass = getSnrClass(neighbor.snr);
+                html += `
+                    <div class="mesh-network-neighbor">
+                        <span class="mesh-network-neighbor-id">${escapeHtml(neighbor.neighbor_id)}</span>
+                        <span class="mesh-network-neighbor-snr ${snrClass}">${neighbor.snr.toFixed(1)} dB</span>
+                    </div>
+                `;
+            });
+
+            html += '</div></div>';
+        }
+
+        html += '</div>';
+        modal.querySelector('.signal-details-modal-body').innerHTML = html;
+    }
+
+    /**
+     * Close network modal
+     */
+    function closeNetworkModal() {
+        const modal = document.getElementById('meshNetworkModal');
+        if (modal) modal.classList.remove('show');
+    }
+
+    /**
+     * Show range test modal
+     */
+    function showRangeTestModal() {
+        let modal = document.getElementById('meshRangeTestModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'meshRangeTestModal';
+            modal.className = 'signal-details-modal';
+            document.body.appendChild(modal);
+        }
+
+        modal.innerHTML = `
+            <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeRangeTestModal()"></div>
+            <div class="signal-details-modal-content">
+                <div class="signal-details-modal-header">
+                    <h3>Range Test</h3>
+                    <button class="signal-details-modal-close" onclick="Meshtastic.closeRangeTestModal()">&times;</button>
+                </div>
+                <div class="signal-details-modal-body">
+                    <div class="form-group">
+                        <label>Number of Packets</label>
+                        <input type="number" id="rangeTestCount" value="10" min="1" max="100" style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);">
+                    </div>
+                    <div class="form-group" style="margin-top: 12px;">
+                        <label>Interval (seconds)</label>
+                        <input type="number" id="rangeTestInterval" value="5" min="1" max="60" style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);">
+                    </div>
+                    <div style="margin-top: 16px; display: flex; gap: 8px;">
+                        <button id="rangeTestStartBtn" class="run-btn" onclick="Meshtastic.startRangeTest()">Start Test</button>
+                        <button id="rangeTestStopBtn" class="run-btn" style="display: none; background: var(--accent-red);" onclick="Meshtastic.stopRangeTest()">Stop Test</button>
+                    </div>
+                    <div id="rangeTestStatus" style="margin-top: 16px; display: none;">
+                        <div class="mesh-traceroute-spinner" style="margin: 0 auto;"></div>
+                        <p style="color: var(--text-dim); text-align: center; margin-top: 10px;">Sending packets...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        modal.classList.add('show');
+    }
+
+    /**
+     * Start range test
+     */
+    async function startRangeTest() {
+        const countInput = document.getElementById('rangeTestCount');
+        const intervalInput = document.getElementById('rangeTestInterval');
+        const startBtn = document.getElementById('rangeTestStartBtn');
+        const stopBtn = document.getElementById('rangeTestStopBtn');
+        const statusDiv = document.getElementById('rangeTestStatus');
+
+        const count = parseInt(countInput?.value || '10', 10);
+        const interval = parseInt(intervalInput?.value || '5', 10);
+
+        try {
+            const response = await fetch('/meshtastic/range-test/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ count, interval })
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'started') {
+                if (startBtn) startBtn.style.display = 'none';
+                if (stopBtn) stopBtn.style.display = 'inline-block';
+                if (statusDiv) statusDiv.style.display = 'block';
+
+                showNotification('Meshtastic', `Range test started: ${count} packets`);
+
+                // Poll for completion
+                pollRangeTestStatus();
+            } else {
+                showStatusMessage(data.message || 'Failed to start range test', 'error');
+            }
+        } catch (err) {
+            console.error('Range test error:', err);
+            showStatusMessage('Error starting range test: ' + err.message, 'error');
+        }
+    }
+
+    /**
+     * Stop range test
+     */
+    async function stopRangeTest() {
+        try {
+            await fetch('/meshtastic/range-test/stop', { method: 'POST' });
+            resetRangeTestUI();
+            showNotification('Meshtastic', 'Range test stopped');
+        } catch (err) {
+            console.error('Error stopping range test:', err);
+        }
+    }
+
+    /**
+     * Poll range test status
+     */
+    async function pollRangeTestStatus() {
+        try {
+            const response = await fetch('/meshtastic/range-test/status');
+            const data = await response.json();
+
+            if (data.running) {
+                setTimeout(pollRangeTestStatus, 1000);
+            } else {
+                resetRangeTestUI();
+                showNotification('Meshtastic', 'Range test complete');
+            }
+        } catch (err) {
+            console.error('Error polling range test:', err);
+            resetRangeTestUI();
+        }
+    }
+
+    /**
+     * Reset range test UI
+     */
+    function resetRangeTestUI() {
+        const startBtn = document.getElementById('rangeTestStartBtn');
+        const stopBtn = document.getElementById('rangeTestStopBtn');
+        const statusDiv = document.getElementById('rangeTestStatus');
+
+        if (startBtn) startBtn.style.display = 'inline-block';
+        if (stopBtn) stopBtn.style.display = 'none';
+        if (statusDiv) statusDiv.style.display = 'none';
+    }
+
+    /**
+     * Close range test modal
+     */
+    function closeRangeTestModal() {
+        const modal = document.getElementById('meshRangeTestModal');
+        if (modal) modal.classList.remove('show');
+    }
+
+    /**
+     * Show Store & Forward modal
+     */
+    async function showStoreForwardModal() {
+        let modal = document.getElementById('meshStoreForwardModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'meshStoreForwardModal';
+            modal.className = 'signal-details-modal';
+            document.body.appendChild(modal);
+        }
+
+        // Show loading state
+        modal.innerHTML = `
+            <div class="signal-details-modal-backdrop" onclick="Meshtastic.closeStoreForwardModal()"></div>
+            <div class="signal-details-modal-content">
+                <div class="signal-details-modal-header">
+                    <h3>Store & Forward</h3>
+                    <button class="signal-details-modal-close" onclick="Meshtastic.closeStoreForwardModal()">&times;</button>
+                </div>
+                <div class="signal-details-modal-body">
+                    <div style="text-align: center; padding: 20px;">
+                        <div class="mesh-traceroute-spinner"></div>
+                        <p style="color: var(--text-dim); margin-top: 10px;">Checking for S&F router...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        modal.classList.add('show');
+
+        try {
+            const response = await fetch('/meshtastic/store-forward/status');
+            const data = await response.json();
+
+            if (data.available) {
+                modal.querySelector('.signal-details-modal-body').innerHTML = `
+                    <div class="mesh-sf-info">
+                        <p style="color: var(--accent-green); margin-bottom: 12px;">
+                            ✓ Store & Forward router found
+                        </p>
+                        <p style="color: var(--text-secondary); font-size: 12px;">
+                            Router: ${escapeHtml(data.router_name || data.router_id || 'Unknown')}
+                        </p>
+                    </div>
+                    <div class="form-group" style="margin-top: 16px;">
+                        <label>Request history for:</label>
+                        <select id="sfWindowMinutes" style="width: 100%; padding: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary);">
+                            <option value="15">Last 15 minutes</option>
+                            <option value="60" selected>Last hour</option>
+                            <option value="240">Last 4 hours</option>
+                            <option value="1440">Last 24 hours</option>
+                        </select>
+                    </div>
+                    <button class="run-btn" style="margin-top: 16px; width: 100%;" onclick="Meshtastic.requestStoreForward()">
+                        Fetch Missed Messages
+                    </button>
+                `;
+            } else {
+                modal.querySelector('.signal-details-modal-body').innerHTML = `
+                    <p style="color: var(--text-dim); text-align: center; padding: 20px;">
+                        No Store & Forward router found on the mesh.<br><br>
+                        <span style="font-size: 11px;">
+                            S&F requires a node with ROUTER role running the<br>
+                            Store & Forward module with history enabled.
+                        </span>
+                    </p>
+                `;
+            }
+        } catch (err) {
+            console.error('S&F status error:', err);
+            modal.querySelector('.signal-details-modal-body').innerHTML = `
+                <p style="color: var(--status-error);">Error: ${escapeHtml(err.message)}</p>
+            `;
+        }
+    }
+
+    /**
+     * Request Store & Forward history
+     */
+    async function requestStoreForward() {
+        const select = document.getElementById('sfWindowMinutes');
+        const windowMinutes = parseInt(select?.value || '60', 10);
+
+        try {
+            const response = await fetch('/meshtastic/store-forward/request', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ window_minutes: windowMinutes })
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'sent') {
+                showNotification('Meshtastic', `Requested ${windowMinutes} minutes of history`);
+                closeStoreForwardModal();
+            } else {
+                showStatusMessage(data.message || 'Failed to request S&F history', 'error');
+            }
+        } catch (err) {
+            console.error('S&F request error:', err);
+            showStatusMessage('Error: ' + err.message, 'error');
+        }
+    }
+
+    /**
+     * Close Store & Forward modal
+     */
+    function closeStoreForwardModal() {
+        const modal = document.getElementById('meshStoreForwardModal');
+        if (modal) modal.classList.remove('show');
+    }
+
     return {
         init,
         start,
@@ -1473,7 +2216,26 @@ const Meshtastic = (function() {
         toggleSidebar,
         toggleOptionsPanel,
         sendTraceroute,
-        closeTracerouteModal
+        closeTracerouteModal,
+        // New features
+        requestPosition,
+        checkFirmware,
+        closeFirmwareModal,
+        showChannelQR,
+        closeQRModal,
+        showTelemetryChart,
+        closeTelemetryModal,
+        showNetworkTopology,
+        closeNetworkModal,
+        // Range test
+        showRangeTestModal,
+        startRangeTest,
+        stopRangeTest,
+        closeRangeTestModal,
+        // Store & Forward
+        showStoreForwardModal,
+        requestStoreForward,
+        closeStoreForwardModal
     };
 
     /**

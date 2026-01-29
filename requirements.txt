@@ -23,6 +23,9 @@ pyserial>=3.5
 # Meshtastic mesh network support (optional - only needed for Meshtastic features)
 meshtastic>=2.0.0
 
+# QR code generation for Meshtastic channels (optional)
+qrcode[pil]>=7.4
+
 # Development dependencies (install with: pip install -r requirements-dev.txt)
 # pytest>=7.0.0
 # pytest-cov>=4.0.0
