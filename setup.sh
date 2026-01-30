@@ -893,19 +893,9 @@ install_debian_packages() {
 
   progress "RTL-SDR Blog drivers"
   if cmd_exists rtl_test; then
-    info "RTL-SDR tools already installed."
-    if $IS_DRAGONOS; then
-      info "Skipping RTL-SDR Blog driver installation (DragonOS has working drivers)."
-    else
-      echo "RTL-SDR Blog drivers provide improved support for V4 dongles."
-      echo "Installing these will REPLACE your current RTL-SDR drivers."
-      if ask_yes_no "Install RTL-SDR Blog drivers?"; then
-        install_rtlsdr_blog_drivers_debian
-      else
-        ok "Keeping existing RTL-SDR drivers."
-      fi
-    fi
+    ok "RTL-SDR drivers already installed"
   else
+    info "RTL-SDR drivers not found, installing RTL-SDR Blog drivers..."
     install_rtlsdr_blog_drivers_debian
   fi
 
@@ -1007,11 +997,12 @@ install_debian_packages() {
   setup_udev_rules_debian
 
   progress "Kernel driver configuration"
-  echo
   if $IS_DRAGONOS; then
     info "DragonOS already has RTL-SDR drivers configured correctly."
-    info "Skipping kernel driver blacklist (not needed)."
+  elif [[ -f /etc/modprobe.d/blacklist-rtlsdr.conf ]]; then
+    ok "DVB kernel drivers already blacklisted"
   else
+    echo
     echo "The DVB-T kernel drivers conflict with RTL-SDR userspace access."
     echo "Blacklisting them allows rtl_sdr tools to access the device."
     if ask_yes_no "Blacklist conflicting kernel drivers?"; then
