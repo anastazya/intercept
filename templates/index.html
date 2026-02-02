@@ -2418,6 +2418,19 @@
             // Load bias-T setting from localStorage
             loadBiasTSetting();
 
+            // Initialize device list from server-provided data
+            // This ensures currentDeviceList is populated on page load (fixes #99)
+            if (typeof deviceList !== 'undefined' && deviceList.length > 0) {
+                currentDeviceList = deviceList;
+                const firstType = deviceList[0].sdr_type || 'rtlsdr';
+                const sdrTypeSelect = document.getElementById('sdrTypeSelect');
+                if (sdrTypeSelect) {
+                    sdrTypeSelect.value = firstType;
+                }
+                // Defer onSDRTypeChanged to ensure DOM is ready
+                setTimeout(onSDRTypeChanged, 0);
+            }
+
             // Initialize observer location input fields from saved location
             const obsLatInput = document.getElementById('obsLat');
             const obsLonInput = document.getElementById('obsLon');
