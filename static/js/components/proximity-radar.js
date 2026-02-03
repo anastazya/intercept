@@ -207,9 +207,14 @@ const ProximityRadar = (function() {
             const pulseClass = isNew ? 'radar-dot-pulse' : '';
             const isSelected = selectedDeviceKey && device.device_key === selectedDeviceKey;
 
+            // Hit area size (prevents hover flicker when scaling)
+            const hitAreaSize = Math.max(dotSize * 2, 15);
+
             return `
                 <g class="radar-device ${pulseClass}${isSelected ? ' selected' : ''}" data-device-key="${escapeAttr(device.device_key)}"
                    transform="translate(${x}, ${y})" style="cursor: pointer;">
+                    <!-- Invisible hit area to prevent hover flicker -->
+                    <circle class="radar-device-hitarea" r="${hitAreaSize}" fill="transparent" />
                     ${isSelected ? `<circle r="${dotSize + 8}" fill="none" stroke="#00d4ff" stroke-width="2" stroke-opacity="0.8">
                         <animate attributeName="r" values="${dotSize + 6};${dotSize + 10};${dotSize + 6}" dur="1.5s" repeatCount="indefinite"/>
                         <animate attributeName="stroke-opacity" values="0.8;0.4;0.8" dur="1.5s" repeatCount="indefinite"/>

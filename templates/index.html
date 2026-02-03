@@ -508,8 +508,7 @@
                             {% if devices %}
                             {% for device in devices %}
                             <option value="{{ device.index }}"
-                                data-sdr-type="{{ device.sdr_type | default('rtlsdr') }}">{{ device.index }}: {{
-                                device.name }}</option>
+                                data-sdr-type="{{ device.sdr_type | default('rtlsdr') }}">{{ device.index }}: {{ device.name }}{% if device.serial and device.serial != 'N/A' and device.serial != 'Unknown' %} (SN: {{ device.serial }}){% endif %}</option>
                             {% endfor %}
                             {% else %}
                             <option value="0">No devices found</option>
@@ -3696,9 +3695,10 @@
             if (filteredDevices.length === 0) {
                 select.innerHTML = `<option value="0">No ${sdrCapabilities[sdrType]?.name || sdrType} devices found</option>`;
             } else {
-                select.innerHTML = filteredDevices.map(d =>
-                    `<option value="${d.index}" data-sdr-type="${d.sdr_type || 'rtlsdr'}">${d.index}: ${d.name}</option>`
-                ).join('');
+                select.innerHTML = filteredDevices.map(d => {
+                    const serialSuffix = d.serial && d.serial !== 'N/A' && d.serial !== 'Unknown' ? ` (SN: ${d.serial})` : '';
+                    return `<option value="${d.index}" data-sdr-type="${d.sdr_type || 'rtlsdr'}">${d.index}: ${d.name}${serialSuffix}</option>`;
+                }).join('');
             }
 
             // Update capabilities display
@@ -3764,7 +3764,7 @@
                 return `<div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--border-color);">
                     <div style="display: flex; align-items: center;">
                         ${statusDot}
-                        <span style="font-size: 11px;">#${d.index} ${d.name || 'Unknown'}</span>
+                        <span style="font-size: 11px;">#${d.index} ${d.name || 'Unknown'}${d.serial && d.serial !== 'N/A' && d.serial !== 'Unknown' ? ` (${d.serial})` : ''}</span>
                     </div>
                     <div style="display: flex; align-items: center; gap: 6px;">
                         <span style="font-size: 10px; color: ${modeColor}; font-weight: bold;">${modeName}</span>

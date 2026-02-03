@@ -645,19 +645,21 @@ def health_check() -> Response:
 
 @app.route('/killall', methods=['POST'])
 def kill_all() -> Response:
-    """Kill all decoder and WiFi processes."""
+    """Kill all decoder, WiFi, and Bluetooth processes."""
     global current_process, sensor_process, wifi_process, adsb_process, ais_process, acars_process
-    global aprs_process, aprs_rtl_process, dsc_process, dsc_rtl_process
+    global aprs_process, aprs_rtl_process, dsc_process, dsc_rtl_process, bt_process
 
     # Import adsb and ais modules to reset their state
     from routes import adsb as adsb_module
     from routes import ais as ais_module
+    from utils.bluetooth import reset_bluetooth_scanner
 
     killed = []
     processes_to_kill = [
         'rtl_fm', 'multimon-ng', 'rtl_433',
         'airodump-ng', 'aireplay-ng', 'airmon-ng',
-        'dump1090', 'acarsdec', 'direwolf', 'AIS-catcher'
+        'dump1090', 'acarsdec', 'direwolf', 'AIS-catcher',
+        'hcitool', 'bluetoothctl'
     ]
 
     for proc in processes_to_kill:
@@ -700,6 +702,26 @@ def kill_all() -> Response:
     with dsc_lock:
         dsc_process = None
         dsc_rtl_process = None
+
+    # Reset Bluetooth state (legacy)
+    with bt_lock:
+        if bt_process:
+            try:
+                bt_process.terminate()
+                bt_process.wait(timeout=2)
+            except Exception:
+                try:
+                    bt_process.kill()
+                except Exception:
+                    pass
+        bt_process = None
+
+    # Reset Bluetooth v2 scanner
+    try:
+        reset_bluetooth_scanner()
+        killed.append('bluetooth_scanner')
+    except Exception:
+        pass
 
     # Clear SDR device registry
     with sdr_device_registry_lock:
