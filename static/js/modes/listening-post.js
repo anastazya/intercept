@@ -242,6 +242,29 @@ function startScanner() {
             isScannerPaused = false;
             scannerSignalActive = false;
             scannerMethod = (scanResult.config && scanResult.config.scan_method) ? scanResult.config.scan_method : 'power';
+            if (scanResult.config) {
+                const cfgStart = parseFloat(scanResult.config.start_freq);
+                const cfgEnd = parseFloat(scanResult.config.end_freq);
+                const cfgStep = parseFloat(scanResult.config.step);
+                if (Number.isFinite(cfgStart)) scannerStartFreq = cfgStart;
+                if (Number.isFinite(cfgEnd)) scannerEndFreq = cfgEnd;
+                if (Number.isFinite(cfgStep)) scannerStepKhz = cfgStep;
+                scannerTotalSteps = Math.max(1, Math.round(((scannerEndFreq - scannerStartFreq) * 1000) / (scannerStepKhz || 1)));
+
+                const startInput = document.getElementById('radioScanStart');
+                if (startInput && Number.isFinite(cfgStart)) startInput.value = cfgStart.toFixed(3);
+                const endInput = document.getElementById('radioScanEnd');
+                if (endInput && Number.isFinite(cfgEnd)) endInput.value = cfgEnd.toFixed(3);
+
+                const rangeStart = document.getElementById('scannerRangeStart');
+                if (rangeStart && Number.isFinite(cfgStart)) rangeStart.textContent = cfgStart.toFixed(1);
+                const rangeEnd = document.getElementById('scannerRangeEnd');
+                if (rangeEnd && Number.isFinite(cfgEnd)) rangeEnd.textContent = cfgEnd.toFixed(1);
+                const mainRangeStart = document.getElementById('mainRangeStart');
+                if (mainRangeStart && Number.isFinite(cfgStart)) mainRangeStart.textContent = cfgStart.toFixed(1) + ' MHz';
+                const mainRangeEnd = document.getElementById('mainRangeEnd');
+                if (mainRangeEnd && Number.isFinite(cfgEnd)) mainRangeEnd.textContent = cfgEnd.toFixed(1) + ' MHz';
+            }
 
             // Update controls (with null checks)
             const startBtn = document.getElementById('scannerStartBtn');
