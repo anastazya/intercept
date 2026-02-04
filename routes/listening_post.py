@@ -64,7 +64,7 @@ scanner_config = {
     'bias_t': False,  # Bias-T power for external LNA
     'sdr_type': 'rtlsdr',  # SDR type: rtlsdr, hackrf, airspy, limesdr, sdrplay
     'scan_method': 'power',  # power (rtl_power) or classic (rtl_fm hop)
-    'snr_threshold': 12,
+    'snr_threshold': 8,
 }
 
 # Activity log
@@ -529,7 +529,7 @@ def scanner_loop_power():
             if total_bins <= 0:
                 time.sleep(0.2)
                 continue
-            global_index = 0
+            segment_offset = 0
 
             for sweep_start, sweep_end, sweep_bin, bin_values in segments:
                 # Noise floor (median)
@@ -550,7 +550,7 @@ def scanner_loop_power():
                     snr = val - noise_floor
                     level = int(max(0, snr) * 100)
                     threshold = int(snr_threshold * 100)
-                    progress = min(1.0, global_index / max(1, total_bins - 1))
+                    progress = min(1.0, (segment_offset + idx) / max(1, total_bins - 1))
                     try:
                         scanner_queue.put_nowait({
                             'type': 'scan_update',
@@ -562,7 +562,7 @@ def scanner_loop_power():
                         })
                     except queue.Full:
                         pass
-                    global_index += emit_stride
+                segment_offset += len(bin_values)
 
                 # Detect peaks (clusters above threshold)
                 peaks = []

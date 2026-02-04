@@ -28,7 +28,7 @@ let audioQueue = [];
 let isWebSocketAudio = false;
 let audioFetchController = null;
 let audioUnlockRequested = false;
-let scannerSnrThreshold = 12;
+let scannerSnrThreshold = 8;
 
 // Visualizer state
 let visualizerContext = null;
@@ -570,7 +570,11 @@ function handleScannerEvent(data) {
 }
 
 function handleFrequencyUpdate(data) {
-    const freqStr = data.frequency.toFixed(3);
+    const progressValue = (data.progress !== undefined)
+        ? data.progress
+        : ((data.frequency - scannerStartFreq) / (scannerEndFreq - scannerStartFreq));
+    const displayFreq = scannerStartFreq + (progressValue * (scannerEndFreq - scannerStartFreq));
+    const freqStr = displayFreq.toFixed(3);
 
     const currentFreq = document.getElementById('scannerCurrentFreq');
     if (currentFreq) currentFreq.textContent = freqStr + ' MHz';
@@ -579,9 +583,7 @@ function handleFrequencyUpdate(data) {
     if (mainFreq) mainFreq.textContent = freqStr;
 
     // Update progress bar
-    const progress = (data.progress !== undefined)
-        ? (data.progress * 100)
-        : ((data.frequency - scannerStartFreq) / (scannerEndFreq - scannerStartFreq)) * 100;
+    const progress = Math.max(0, Math.min(100, progressValue * 100));
     const progressBar = document.getElementById('scannerProgressBar');
     if (progressBar) progressBar.style.width = Math.max(0, Math.min(100, progress)) + '%';
 
