@@ -310,6 +310,24 @@ def scanner_loop():
 
                     last_signal_time = time.time()
 
+                    # After dwell, move on to keep scanning
+                    if scanner_running and not scanner_skip_signal:
+                        signal_detected = False
+                        _stop_audio_stream()
+                        try:
+                            scanner_queue.put_nowait({
+                                'type': 'signal_lost',
+                                'frequency': current_freq
+                            })
+                        except queue.Full:
+                            pass
+
+                        current_freq += step_mhz
+                        if current_freq > scanner_config['end_freq']:
+                            current_freq = scanner_config['start_freq']
+                            add_activity_log('scan_cycle', current_freq, 'Scan cycle complete')
+                        time.sleep(scanner_config['scan_delay'])
+
                 else:
                     # No signal at this frequency
                     if signal_detected:
