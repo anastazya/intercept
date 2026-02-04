@@ -2122,6 +2122,10 @@ async function _startDirectListenInternal() {
         const streamUrl = `/listening/audio/stream?t=${Date.now()}`;
         console.log('[LISTEN] Connecting to stream:', streamUrl);
         audioPlayer.src = streamUrl;
+        audioPlayer.preload = 'auto';
+        audioPlayer.autoplay = true;
+        audioPlayer.muted = false;
+        audioPlayer.load();
 
         // Apply current volume from knob
         const volumeKnob = document.getElementById('radioVolumeKnob');
