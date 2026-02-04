@@ -27,6 +27,7 @@ let audioWebSocket = null;
 let audioQueue = [];
 let isWebSocketAudio = false;
 let audioFetchController = null;
+let audioUnlockRequested = false;
 
 // Visualizer state
 let visualizerContext = null;
@@ -1861,9 +1862,8 @@ function toggleDirectListen() {
             audioPlayer.muted = false;
             audioPlayer.autoplay = true;
             audioPlayer.preload = 'auto';
-            // Ensure Chrome treats this as a user-initiated playback
-            audioPlayer.play().catch(() => {});
         }
+        audioUnlockRequested = true;
         // First press - start immediately, don't debounce
         startDirectListenImmediate();
     }
@@ -2149,13 +2149,11 @@ async function _startDirectListenInternal() {
         // Wait for audio to be ready then play
         audioPlayer.oncanplay = () => {
             console.log('[LISTEN] Audio can play');
-            audioPlayer.play().catch(e => console.warn('[LISTEN] Autoplay blocked:', e));
+            attemptAudioPlay(audioPlayer);
         };
 
         // Also try to play immediately (some browsers need this)
-        audioPlayer.play().catch(e => {
-            console.log('[LISTEN] Initial play blocked, waiting for canplay');
-        });
+        attemptAudioPlay(audioPlayer);
 
         // Fallback: if stream never starts, try fetch-based stream
         setTimeout(async () => {
@@ -2189,6 +2187,36 @@ async function _startDirectListenInternal() {
     } finally {
         isRestarting = false;
     }
+}
+
+function attemptAudioPlay(audioPlayer) {
+    if (!audioPlayer) return;
+    audioPlayer.play().then(() => {
+        hideAudioUnlock();
+    }).catch(() => {
+        // Autoplay likely blocked; show manual unlock
+        showAudioUnlock(audioPlayer);
+    });
+}
+
+function showAudioUnlock(audioPlayer) {
+    const unlockBtn = document.getElementById('audioUnlockBtn');
+    if (!unlockBtn || !audioUnlockRequested) return;
+    unlockBtn.style.display = 'block';
+    unlockBtn.onclick = () => {
+        audioPlayer.muted = false;
+        audioPlayer.play().then(() => {
+            hideAudioUnlock();
+        }).catch(() => {});
+    };
+}
+
+function hideAudioUnlock() {
+    const unlockBtn = document.getElementById('audioUnlockBtn');
+    if (unlockBtn) {
+        unlockBtn.style.display = 'none';
+    }
+    audioUnlockRequested = false;
 }
 
 async function startFetchAudioStream(streamUrl, audioPlayer) {
