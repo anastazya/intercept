@@ -276,7 +276,7 @@ def start_dmr() -> Response:
         dmr_rtl_process = subprocess.Popen(
             rtl_cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
 
         dmr_dsd_process = subprocess.Popen(
@@ -295,17 +295,32 @@ def start_dmr() -> Response:
         dsd_rc = dmr_dsd_process.poll()
         if rtl_rc is not None or dsd_rc is not None:
             # Process died — capture stderr for diagnostics
+            rtl_err = ''
+            if dmr_rtl_process.stderr:
+                rtl_err = dmr_rtl_process.stderr.read().decode('utf-8', errors='replace')[:500]
             dsd_err = ''
             if dmr_dsd_process.stderr:
                 dsd_err = dmr_dsd_process.stderr.read().decode('utf-8', errors='replace')[:500]
-            logger.error(f"DSD pipeline died: rtl_fm rc={rtl_rc}, dsd rc={dsd_rc}, dsd stderr={dsd_err!r}")
+            logger.error(f"DSD pipeline died: rtl_fm rc={rtl_rc} err={rtl_err!r}, dsd rc={dsd_rc} err={dsd_err!r}")
             if dmr_active_device is not None:
                 app_module.release_sdr_device(dmr_active_device)
                 dmr_active_device = None
+            # Surface the most relevant error to the user
+            detail = rtl_err.strip() or dsd_err.strip()
             msg = 'Failed to start DSD pipeline'
-            if dsd_err:
-                msg += f': {dsd_err.strip()}'
+            if detail:
+                msg += f': {detail}'
             return jsonify({'status': 'error', 'message': msg}), 500
+
+        # Drain rtl_fm stderr in background to prevent pipe blocking
+        def _drain_rtl_stderr(proc):
+            try:
+                for line in proc.stderr:
+                    pass
+            except Exception:
+                pass
+
+        threading.Thread(target=_drain_rtl_stderr, args=(dmr_rtl_process,), daemon=True).start()
 
         dmr_running = True
         dmr_thread = threading.Thread(
