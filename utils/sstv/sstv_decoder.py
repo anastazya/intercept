@@ -107,10 +107,10 @@ class DecodeProgress:
             result['message'] = self.message
         if self.image:
             result['image'] = self.image.to_dict()
-        if self.signal_level > 0:
+        if self.status == 'detecting':
             result['signal_level'] = self.signal_level
-        if self.sstv_tone:
-            result['sstv_tone'] = self.sstv_tone
+            if self.sstv_tone:
+                result['sstv_tone'] = self.sstv_tone
         return result
 
 
