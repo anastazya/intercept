@@ -23,7 +23,7 @@ import numpy as np
 from utils.logging import get_logger
 
 from .constants import ISS_SSTV_FREQ, SAMPLE_RATE, SPEED_OF_LIGHT
-from .dsp import normalize_audio
+from .dsp import goertzel_mag, normalize_audio
 from .image_decoder import SSTVImageDecoder
 from .modes import get_mode
 from .vis import VISDetector
@@ -92,6 +92,8 @@ class DecodeProgress:
     progress_percent: int = 0
     message: str | None = None
     image: SSTVImage | None = None
+    signal_level: int = 0          # 0-100 RMS audio level
+    sstv_tone: str | None = None   # 'leader', 'sync', 'pixel', None
 
     def to_dict(self) -> dict:
         result: dict = {
@@ -105,6 +107,10 @@ class DecodeProgress:
             result['message'] = self.message
         if self.image:
             result['image'] = self.image.to_dict()
+        if self.signal_level > 0:
+            result['signal_level'] = self.signal_level
+        if self.sstv_tone:
+            result['sstv_tone'] = self.sstv_tone
         return result
 
 
@@ -370,6 +376,7 @@ class SSTVDecoder:
         vis_detector = VISDetector(sample_rate=SAMPLE_RATE)
         image_decoder: SSTVImageDecoder | None = None
         current_mode_name: str | None = None
+        chunk_counter = 0
 
         logger.info("Audio decode thread started")
         rtl_fm_error: str = ''
@@ -401,6 +408,8 @@ class SSTVDecoder:
                     continue
                 raw_samples = np.frombuffer(raw_data[:n_samples * 2], dtype=np.int16)
                 samples = normalize_audio(raw_samples)
+
+                chunk_counter += 1
 
                 if image_decoder is not None:
                     # Currently decoding an image
@@ -443,6 +452,31 @@ class SSTVDecoder:
                         else:
                             logger.warning(f"No mode spec for VIS code {vis_code}")
                             vis_detector.reset()
+
+                    # Emit signal level metrics every ~500ms (every 5th 100ms chunk)
+                    if chunk_counter % 5 == 0 and image_decoder is None:
+                        rms = float(np.sqrt(np.mean(samples ** 2)))
+                        signal_level = min(100, int(rms * 500))
+
+                        leader_energy = goertzel_mag(samples, 1900.0, SAMPLE_RATE)
+                        sync_energy = goertzel_mag(samples, 1200.0, SAMPLE_RATE)
+                        noise_floor = max(rms * 0.5, 0.001)
+
+                        if leader_energy > noise_floor * 5:
+                            sstv_tone = 'leader'
+                        elif sync_energy > noise_floor * 5:
+                            sstv_tone = 'sync'
+                        elif signal_level > 10:
+                            sstv_tone = 'noise'
+                        else:
+                            sstv_tone = None
+
+                        self._emit_progress(DecodeProgress(
+                            status='detecting',
+                            message='Listening...',
+                            signal_level=signal_level,
+                            sstv_tone=sstv_tone,
+                        ))
 
             except Exception as e:
                 logger.error(f"Error in decode thread: {e}")

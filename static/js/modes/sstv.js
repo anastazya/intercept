@@ -682,7 +682,69 @@ const SSTV = (function() {
             updateStatusUI('listening', 'Listening...');
         } else if (data.status === 'detecting') {
             updateStatusUI('listening', data.message || 'Listening...');
+            if (data.signal_level !== undefined) {
+                renderSignalMonitor(data);
+            }
         }
+    }
+
+    /**
+     * Render signal monitor in live area during detecting mode
+     */
+    function renderSignalMonitor(data) {
+        const container = document.getElementById('sstvLiveContent');
+        if (!container) return;
+
+        const level = data.signal_level || 0;
+        const tone = data.sstv_tone;
+
+        let barColor, statusText;
+        if (tone === 'leader') {
+            barColor = 'var(--accent-green)';
+            statusText = 'SSTV leader tone detected';
+        } else if (tone === 'sync') {
+            barColor = 'var(--accent-cyan)';
+            statusText = 'SSTV sync pulse detected';
+        } else if (tone === 'noise') {
+            barColor = 'var(--text-dim)';
+            statusText = 'Audio signal present';
+        } else if (level > 10) {
+            barColor = 'var(--text-dim)';
+            statusText = 'Audio signal present';
+        } else {
+            barColor = 'var(--text-dim)';
+            statusText = 'No signal';
+        }
+
+        let monitor = container.querySelector('.sstv-signal-monitor');
+        if (!monitor) {
+            container.innerHTML = `
+                <div class="sstv-signal-monitor">
+                    <div class="sstv-signal-monitor-header">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M2 12L5 12M5 12C5 12 6 3 12 3C18 3 19 12 19 12M19 12L22 12"/>
+                            <circle cx="12" cy="18" r="2"/>
+                            <path d="M12 16V12"/>
+                        </svg>
+                        Signal Monitor
+                    </div>
+                    <div class="sstv-signal-level-row">
+                        <span class="sstv-signal-level-label">LEVEL</span>
+                        <div class="sstv-signal-bar-track">
+                            <div class="sstv-signal-bar-fill" style="width: 0%"></div>
+                        </div>
+                        <span class="sstv-signal-level-value">0</span>
+                    </div>
+                    <div class="sstv-signal-status-text">No signal</div>
+                </div>`;
+            monitor = container.querySelector('.sstv-signal-monitor');
+        }
+
+        const fill = monitor.querySelector('.sstv-signal-bar-fill');
+        fill.style.width = level + '%';
+        fill.style.background = barColor;
+        monitor.querySelector('.sstv-signal-status-text').textContent = statusText;
+        monitor.querySelector('.sstv-signal-level-value').textContent = level;
     }
 
     /**
