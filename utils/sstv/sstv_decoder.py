@@ -94,6 +94,7 @@ class DecodeProgress:
     image: SSTVImage | None = None
     signal_level: int | None = None  # 0-100 RMS audio level, None = not measured
     sstv_tone: str | None = None     # 'leader', 'sync', 'noise', None
+    vis_state: str | None = None     # VIS detector state name
 
     def to_dict(self) -> dict:
         result: dict = {
@@ -111,6 +112,8 @@ class DecodeProgress:
             result['signal_level'] = self.signal_level
         if self.sstv_tone:
             result['sstv_tone'] = self.sstv_tone
+        if self.vis_state:
+            result['vis_state'] = self.vis_state
         return result
 
 
@@ -476,6 +479,7 @@ class SSTVDecoder:
                             message='Listening...',
                             signal_level=signal_level,
                             sstv_tone=sstv_tone,
+                            vis_state=vis_detector.state.value,
                         ))
 
             except Exception as e:

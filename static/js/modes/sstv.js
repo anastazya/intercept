@@ -743,6 +743,7 @@ const SSTV = (function() {
                         <span class="sstv-signal-level-value">0</span>
                     </div>
                     <div class="sstv-signal-status-text">No signal</div>
+                    <div class="sstv-signal-vis-state">VIS: idle</div>
                 </div>`;
             monitor = container.querySelector('.sstv-signal-monitor');
         }
@@ -752,6 +753,24 @@ const SSTV = (function() {
         fill.style.background = barColor;
         monitor.querySelector('.sstv-signal-status-text').textContent = statusText;
         monitor.querySelector('.sstv-signal-level-value').textContent = level;
+
+        const visStateEl = monitor.querySelector('.sstv-signal-vis-state');
+        if (visStateEl && data.vis_state) {
+            const stateLabels = {
+                'idle': 'Idle',
+                'leader_1': 'Leader',
+                'break': 'Break',
+                'leader_2': 'Leader 2',
+                'start_bit': 'Start bit',
+                'data_bits': 'Data bits',
+                'parity': 'Parity',
+                'stop_bit': 'Stop bit',
+            };
+            const label = stateLabels[data.vis_state] || data.vis_state;
+            visStateEl.textContent = 'VIS: ' + label;
+            visStateEl.className = 'sstv-signal-vis-state' +
+                (data.vis_state !== 'idle' ? ' active' : '');
+        }
     }
 
     /**

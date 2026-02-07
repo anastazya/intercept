@@ -465,6 +465,20 @@
     text-align: center;
 }
 
+.sstv-general-signal-vis-state {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    text-align: center;
+    margin-top: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sstv-general-signal-vis-state.active {
+    color: var(--accent-cyan);
+}
+
 /* ============================================
    IMAGE MODAL
    ============================================ */
