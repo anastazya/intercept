@@ -23,7 +23,7 @@ from utils.validation import (
     validate_rtl_tcp_host, validate_rtl_tcp_port
 )
 from utils.sse import format_sse
-from utils.process import safe_terminate, register_process
+from utils.process import safe_terminate, register_process, unregister_process
 from utils.sdr import SDRFactory, SDRType, SDRValidationError
 from utils.dependencies import get_tool_path
 
@@ -146,14 +146,32 @@ def stream_decoder(master_fd: int, process: subprocess.Popen[bytes]) -> None:
     except Exception as e:
         app_module.output_queue.put({'type': 'error', 'text': str(e)})
     finally:
+        global pager_active_device
         try:
             os.close(master_fd)
         except OSError:
             pass
-        process.wait()
+        # Cleanup companion rtl_fm process and decoder
+        with app_module.process_lock:
+            rtl_proc = getattr(app_module.current_process, '_rtl_process', None)
+        for proc in [rtl_proc, process]:
+            if proc:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                unregister_process(proc)
         app_module.output_queue.put({'type': 'status', 'text': 'stopped'})
         with app_module.process_lock:
             app_module.current_process = None
+        # Release SDR device
+        if pager_active_device is not None:
+            app_module.release_sdr_device(pager_active_device)
+            pager_active_device = None
 
 
 @pager_bp.route('/start', methods=['POST'])
@@ -281,6 +299,7 @@ def start_decoding() -> Response:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
+            register_process(rtl_process)
 
             # Start a thread to monitor rtl_fm stderr for errors
             def monitor_rtl_stderr():
@@ -304,6 +323,7 @@ def start_decoding() -> Response:
                 stderr=slave_fd,
                 close_fds=True
             )
+            register_process(multimon_process)
 
             os.close(slave_fd)
             rtl_process.stdout.close()
@@ -322,12 +342,30 @@ def start_decoding() -> Response:
             return jsonify({'status': 'started', 'command': full_cmd})
 
         except FileNotFoundError as e:
+            # Kill orphaned rtl_fm process
+            try:
+                rtl_process.terminate()
+                rtl_process.wait(timeout=2)
+            except Exception:
+                try:
+                    rtl_process.kill()
+                except Exception:
+                    pass
             # Release device on failure
             if pager_active_device is not None:
                 app_module.release_sdr_device(pager_active_device)
                 pager_active_device = None
             return jsonify({'status': 'error', 'message': f'Tool not found: {e.filename}'})
         except Exception as e:
+            # Kill orphaned rtl_fm process if it was started
+            try:
+                rtl_process.terminate()
+                rtl_process.wait(timeout=2)
+            except Exception:
+                try:
+                    rtl_process.kill()
+                except Exception:
+                    pass
             # Release device on failure
             if pager_active_device is not None:
                 app_module.release_sdr_device(pager_active_device)

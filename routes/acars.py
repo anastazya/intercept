@@ -27,6 +27,7 @@ from utils.constants import (
     SSE_QUEUE_TIMEOUT,
     PROCESS_START_WAIT,
 )
+from utils.process import register_process, unregister_process
 
 acars_bp = Blueprint('acars', __name__, url_prefix='/acars')
 
@@ -144,9 +145,24 @@ def stream_acars_output(process: subprocess.Popen, is_text_mode: bool = False) -
         logger.error(f"ACARS stream error: {e}")
         app_module.acars_queue.put({'type': 'error', 'message': str(e)})
     finally:
+        global acars_active_device
+        # Ensure process is terminated
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        unregister_process(process)
         app_module.acars_queue.put({'type': 'status', 'status': 'stopped'})
         with app_module.acars_lock:
             app_module.acars_process = None
+        # Release SDR device
+        if acars_active_device is not None:
+            app_module.release_sdr_device(acars_active_device)
+            acars_active_device = None
 
 
 @acars_bp.route('/tools')
@@ -311,6 +327,7 @@ def start_acars() -> Response:
             return jsonify({'status': 'error', 'message': error_msg}), 500
 
         app_module.acars_process = process
+        register_process(process)
 
         # Start output streaming thread
         thread = threading.Thread(

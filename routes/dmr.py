@@ -18,6 +18,7 @@ from flask import Blueprint, jsonify, request, Response
 import app as app_module
 from utils.logging import get_logger
 from utils.sse import format_sse
+from utils.process import register_process, unregister_process
 from utils.constants import (
     SSE_QUEUE_TIMEOUT,
     SSE_KEEPALIVE_INTERVAL,
@@ -244,6 +245,7 @@ def stream_dsd_output(rtl_process: subprocess.Popen, dsd_process: subprocess.Pop
     except Exception as e:
         logger.error(f"DSD stream error: {e}")
     finally:
+        global dmr_active_device, dmr_rtl_process, dmr_dsd_process
         dmr_running = False
         # Capture exit info for diagnostics
         rc = dsd_process.poll()
@@ -258,7 +260,26 @@ def stream_dsd_output(rtl_process: subprocess.Popen, dsd_process: subprocess.Pop
             except Exception:
                 pass
             logger.warning(f"DSD process exited with code {rc}: {detail}")
+        # Cleanup both processes
+        for proc in [dsd_process, rtl_process]:
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            if proc:
+                unregister_process(proc)
+        dmr_rtl_process = None
+        dmr_dsd_process = None
         _queue_put({'type': 'status', 'text': reason, 'exit_code': rc, 'detail': detail})
+        # Release SDR device
+        if dmr_active_device is not None:
+            app_module.release_sdr_device(dmr_active_device)
+            dmr_active_device = None
         logger.info("DSD stream thread stopped")
 
 
@@ -354,6 +375,7 @@ def start_dmr() -> Response:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        register_process(dmr_rtl_process)
 
         dmr_dsd_process = subprocess.Popen(
             dsd_cmd,
@@ -361,6 +383,7 @@ def start_dmr() -> Response:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        register_process(dmr_dsd_process)
 
         # Allow rtl_fm to send directly to dsd
         dmr_rtl_process.stdout.close()
@@ -428,21 +451,24 @@ def stop_dmr() -> Response:
     """Stop digital voice decoding."""
     global dmr_rtl_process, dmr_dsd_process, dmr_running, dmr_active_device
 
-    dmr_running = False
+    with dmr_lock:
+        dmr_running = False
 
-    for proc in [dmr_dsd_process, dmr_rtl_process]:
-        if proc and proc.poll() is None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except Exception:
+        for proc in [dmr_dsd_process, dmr_rtl_process]:
+            if proc and proc.poll() is None:
                 try:
-                    proc.kill()
+                    proc.terminate()
+                    proc.wait(timeout=2)
                 except Exception:
-                    pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+            if proc:
+                unregister_process(proc)
 
-    dmr_rtl_process = None
-    dmr_dsd_process = None
+        dmr_rtl_process = None
+        dmr_dsd_process = None
 
     if dmr_active_device is not None:
         app_module.release_sdr_device(dmr_active_device)

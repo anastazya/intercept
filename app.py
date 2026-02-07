@@ -671,7 +671,8 @@ def kill_all() -> Response:
         'rtl_fm', 'multimon-ng', 'rtl_433',
         'airodump-ng', 'aireplay-ng', 'airmon-ng',
         'dump1090', 'acarsdec', 'direwolf', 'AIS-catcher',
-        'hcitool', 'bluetoothctl', 'dsd'
+        'hcitool', 'bluetoothctl', 'dsd',
+        'rtl_tcp', 'rtl_power', 'rtlamr', 'ffmpeg',
     ]
 
     for proc in processes_to_kill:

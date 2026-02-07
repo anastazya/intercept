@@ -66,12 +66,6 @@ def kill_audio_processes():
                 pass
         rtl_process = None
 
-    # Kill any orphaned processes
-    try:
-        subprocess.run(['pkill', '-9', '-f', 'rtl_fm'], capture_output=True, timeout=1)
-    except:
-        pass
-
     time.sleep(0.3)
 
 

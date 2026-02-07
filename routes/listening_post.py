@@ -891,17 +891,6 @@ def _stop_audio_stream_internal():
     audio_process = None
     audio_rtl_process = None
 
-    # Kill any orphaned rtl_fm, rtl_power, and ffmpeg processes
-    for proc_pattern in ['rtl_fm', 'rtl_power']:
-        try:
-            subprocess.run(['pkill', '-9', proc_pattern], capture_output=True, timeout=0.5)
-        except Exception:
-            pass
-    try:
-        subprocess.run(['pkill', '-9', '-f', 'ffmpeg.*pipe:0'], capture_output=True, timeout=0.5)
-    except Exception:
-        pass
-
     # Pause for SDR device USB interface to be released by kernel
     time.sleep(1.0)
 
