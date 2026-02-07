@@ -839,9 +839,13 @@ def _start_audio_stream(frequency: float, modulation: str):
             try:
                 ready, _, _ = select.select([audio_process.stdout], [], [], 4.0)
                 if not ready:
-                    logger.warning("Audio pipeline produced no data in startup window")
+                    logger.warning("Audio pipeline produced no data in startup window — killing stalled pipeline")
+                    _stop_audio_stream_internal()
+                    return
             except Exception as e:
                 logger.warning(f"Audio startup check failed: {e}")
+                _stop_audio_stream_internal()
+                return
 
             audio_running = True
             audio_frequency = frequency
@@ -865,6 +869,8 @@ def _stop_audio_stream_internal():
     # Set flag first to stop any streaming
     audio_running = False
     audio_frequency = 0.0
+
+    had_processes = audio_process is not None or audio_rtl_process is not None
 
     # Kill the pipeline processes and their groups
     if audio_process:
@@ -892,7 +898,8 @@ def _stop_audio_stream_internal():
     audio_rtl_process = None
 
     # Pause for SDR device USB interface to be released by kernel
-    time.sleep(1.0)
+    if had_processes:
+        time.sleep(1.0)
 
 
 # ============================================
@@ -1400,13 +1407,6 @@ def audio_probe() -> Response:
 @listening_post_bp.route('/audio/stream')
 def stream_audio() -> Response:
     """Stream WAV audio."""
-    # Optionally restart pipeline so the stream starts with a fresh header
-    if request.args.get('fresh') == '1' and audio_running:
-        try:
-            _start_audio_stream(audio_frequency or 0.0, audio_modulation or 'fm')
-        except Exception as e:
-            logger.error(f"Audio stream restart failed: {e}")
-
     # Wait for audio to be ready (up to 2 seconds for modulation/squelch changes)
     for _ in range(40):
         if audio_running and audio_process:

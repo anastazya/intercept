@@ -319,7 +319,7 @@ function stopScanner() {
         ? `/controller/agents/${listeningPostCurrentAgent}/listening_post/stop`
         : '/listening/scanner/stop';
 
-    fetch(endpoint, { method: 'POST' })
+    return fetch(endpoint, { method: 'POST' })
         .then(() => {
             if (!isAgentMode && typeof releaseDevice === 'function') releaseDevice('scanner');
             listeningPostCurrentAgent = null;
@@ -2245,7 +2245,7 @@ async function _startDirectListenInternal() {
 
     try {
         if (isScannerRunning) {
-            stopScanner();
+            await stopScanner();
         }
 
         const freqInput = document.getElementById('radioScanStart');
