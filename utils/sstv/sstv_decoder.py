@@ -372,13 +372,27 @@ class SSTVDecoder:
         current_mode_name: str | None = None
 
         logger.info("Audio decode thread started")
+        rtl_fm_error: str = ''
 
         while self._running and self._rtl_process:
             try:
                 raw_data = self._rtl_process.stdout.read(chunk_bytes)
                 if not raw_data:
                     if self._running:
-                        logger.warning("rtl_fm stream ended unexpectedly")
+                        # Read stderr to diagnose why rtl_fm exited
+                        stderr_msg = ''
+                        if self._rtl_process and self._rtl_process.stderr:
+                            with contextlib.suppress(Exception):
+                                stderr_msg = self._rtl_process.stderr.read().decode(
+                                    errors='replace').strip()
+                        rc = self._rtl_process.poll() if self._rtl_process else None
+                        logger.warning(
+                            f"rtl_fm stream ended unexpectedly "
+                            f"(exit code: {rc})"
+                        )
+                        if stderr_msg:
+                            logger.warning(f"rtl_fm stderr: {stderr_msg}")
+                            rtl_fm_error = stderr_msg
                     break
 
                 # Convert int16 PCM to float64
@@ -450,9 +464,11 @@ class SSTVDecoder:
 
         if was_running:
             logger.warning("Audio decode thread stopped unexpectedly")
+            err_detail = rtl_fm_error.split('\n')[-1] if rtl_fm_error else ''
+            msg = f'rtl_fm failed: {err_detail}' if err_detail else 'Decode pipeline stopped unexpectedly'
             self._emit_progress(DecodeProgress(
                 status='error',
-                message='Decode pipeline stopped unexpectedly'
+                message=msg
             ))
         else:
             logger.info("Audio decode thread stopped")
