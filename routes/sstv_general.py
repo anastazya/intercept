@@ -17,7 +17,6 @@ from utils.logging import get_logger
 from utils.sse import format_sse
 from utils.event_pipeline import process_event
 from utils.sstv import (
-    DecodeProgress,
     get_general_sstv_decoder,
 )
 
@@ -49,14 +48,14 @@ SSTV_FREQUENCIES = [
 _FREQ_MODULATION_MAP = {entry['frequency']: entry['modulation'] for entry in SSTV_FREQUENCIES}
 
 
-def _progress_callback(progress: DecodeProgress) -> None:
-    """Callback to queue progress updates for SSE stream."""
+def _progress_callback(data: dict) -> None:
+    """Callback to queue progress/scope updates for SSE stream."""
     try:
-        _sstv_general_queue.put_nowait(progress.to_dict())
+        _sstv_general_queue.put_nowait(data)
     except queue.Full:
         try:
             _sstv_general_queue.get_nowait()
-            _sstv_general_queue.put_nowait(progress.to_dict())
+            _sstv_general_queue.put_nowait(data)
         except queue.Empty:
             pass
 

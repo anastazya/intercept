@@ -21,8 +21,6 @@ from utils.sstv import (
     get_sstv_decoder,
     is_sstv_available,
     ISS_SSTV_FREQ,
-    DecodeProgress,
-    DopplerInfo,
 )
 
 logger = get_logger('intercept.sstv')
@@ -36,14 +34,14 @@ _sstv_queue: queue.Queue = queue.Queue(maxsize=100)
 sstv_active_device: int | None = None
 
 
-def _progress_callback(progress: DecodeProgress) -> None:
-    """Callback to queue progress updates for SSE stream."""
+def _progress_callback(data: dict) -> None:
+    """Callback to queue progress/scope updates for SSE stream."""
     try:
-        _sstv_queue.put_nowait(progress.to_dict())
+        _sstv_queue.put_nowait(data)
     except queue.Full:
         try:
             _sstv_queue.get_nowait()
-            _sstv_queue.put_nowait(progress.to_dict())
+            _sstv_queue.put_nowait(data)
         except queue.Empty:
             pass
 

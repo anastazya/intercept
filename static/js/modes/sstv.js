@@ -21,6 +21,18 @@ const SSTV = (function() {
     // ISS frequency
     const ISS_FREQ = 145.800;
 
+    // Signal scope state
+    let sstvScopeCtx = null;
+    let sstvScopeAnim = null;
+    let sstvScopeHistory = [];
+    const SSTV_SCOPE_LEN = 200;
+    let sstvScopeRms = 0;
+    let sstvScopePeak = 0;
+    let sstvScopeTargetRms = 0;
+    let sstvScopeTargetPeak = 0;
+    let sstvScopeMsgBurst = 0;
+    let sstvScopeTone = null;
+
     /**
      * Initialize the SSTV mode
      */
@@ -635,12 +647,147 @@ const SSTV = (function() {
     }
 
     /**
+     * Initialize signal scope canvas
+     */
+    function initSstvScope() {
+        const canvas = document.getElementById('sstvScopeCanvas');
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * (window.devicePixelRatio || 1);
+        canvas.height = rect.height * (window.devicePixelRatio || 1);
+        sstvScopeCtx = canvas.getContext('2d');
+        sstvScopeHistory = new Array(SSTV_SCOPE_LEN).fill(0);
+        sstvScopeRms = 0;
+        sstvScopePeak = 0;
+        sstvScopeTargetRms = 0;
+        sstvScopeTargetPeak = 0;
+        sstvScopeMsgBurst = 0;
+        sstvScopeTone = null;
+        drawSstvScope();
+    }
+
+    /**
+     * Draw signal scope animation frame
+     */
+    function drawSstvScope() {
+        const ctx = sstvScopeCtx;
+        if (!ctx) return;
+        const W = ctx.canvas.width;
+        const H = ctx.canvas.height;
+        const midY = H / 2;
+
+        // Phosphor persistence
+        ctx.fillStyle = 'rgba(5, 5, 16, 0.3)';
+        ctx.fillRect(0, 0, W, H);
+
+        // Smooth towards target
+        sstvScopeRms += (sstvScopeTargetRms - sstvScopeRms) * 0.25;
+        sstvScopePeak += (sstvScopeTargetPeak - sstvScopePeak) * 0.15;
+
+        // Push to history
+        sstvScopeHistory.push(Math.min(sstvScopeRms / 32768, 1.0));
+        if (sstvScopeHistory.length > SSTV_SCOPE_LEN) sstvScopeHistory.shift();
+
+        // Grid lines
+        ctx.strokeStyle = 'rgba(60, 40, 80, 0.4)';
+        ctx.lineWidth = 0.5;
+        for (let i = 1; i < 4; i++) {
+            const y = (H / 4) * i;
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+        }
+        for (let i = 1; i < 8; i++) {
+            const x = (W / 8) * i;
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+        }
+
+        // Waveform
+        const stepX = W / (SSTV_SCOPE_LEN - 1);
+        ctx.strokeStyle = '#c080ff';
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = '#c080ff';
+        ctx.shadowBlur = 4;
+
+        // Upper half
+        ctx.beginPath();
+        for (let i = 0; i < sstvScopeHistory.length; i++) {
+            const x = i * stepX;
+            const amp = sstvScopeHistory[i] * midY * 0.9;
+            const y = midY - amp;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // Lower half (mirror)
+        ctx.beginPath();
+        for (let i = 0; i < sstvScopeHistory.length; i++) {
+            const x = i * stepX;
+            const amp = sstvScopeHistory[i] * midY * 0.9;
+            const y = midY + amp;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Peak indicator
+        const peakNorm = Math.min(sstvScopePeak / 32768, 1.0);
+        if (peakNorm > 0.01) {
+            const peakY = midY - peakNorm * midY * 0.9;
+            ctx.strokeStyle = 'rgba(255, 68, 68, 0.6)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(0, peakY); ctx.lineTo(W, peakY); ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Image decode flash
+        if (sstvScopeMsgBurst > 0.01) {
+            ctx.fillStyle = `rgba(0, 255, 100, ${sstvScopeMsgBurst * 0.15})`;
+            ctx.fillRect(0, 0, W, H);
+            sstvScopeMsgBurst *= 0.88;
+        }
+
+        // Update labels
+        const rmsLabel = document.getElementById('sstvScopeRmsLabel');
+        const peakLabel = document.getElementById('sstvScopePeakLabel');
+        const toneLabel = document.getElementById('sstvScopeToneLabel');
+        const statusLabel = document.getElementById('sstvScopeStatusLabel');
+        if (rmsLabel) rmsLabel.textContent = Math.round(sstvScopeRms);
+        if (peakLabel) peakLabel.textContent = Math.round(sstvScopePeak);
+        if (toneLabel) {
+            if (sstvScopeTone === 'leader') { toneLabel.textContent = 'LEADER'; toneLabel.style.color = '#0f0'; }
+            else if (sstvScopeTone === 'sync') { toneLabel.textContent = 'SYNC'; toneLabel.style.color = '#0ff'; }
+            else if (sstvScopeTone === 'decoding') { toneLabel.textContent = 'DECODING'; toneLabel.style.color = '#fa0'; }
+            else if (sstvScopeTone === 'noise') { toneLabel.textContent = 'NOISE'; toneLabel.style.color = '#555'; }
+            else { toneLabel.textContent = 'QUIET'; toneLabel.style.color = '#444'; }
+        }
+        if (statusLabel) {
+            if (sstvScopeRms > 500) { statusLabel.textContent = 'SIGNAL'; statusLabel.style.color = '#0f0'; }
+            else { statusLabel.textContent = 'MONITORING'; statusLabel.style.color = '#555'; }
+        }
+
+        sstvScopeAnim = requestAnimationFrame(drawSstvScope);
+    }
+
+    /**
+     * Stop signal scope
+     */
+    function stopSstvScope() {
+        if (sstvScopeAnim) { cancelAnimationFrame(sstvScopeAnim); sstvScopeAnim = null; }
+        sstvScopeCtx = null;
+    }
+
+    /**
      * Start SSE stream
      */
     function startStream() {
         if (eventSource) {
             eventSource.close();
         }
+
+        // Show and init scope
+        const scopePanel = document.getElementById('sstvScopePanel');
+        if (scopePanel) scopePanel.style.display = 'block';
+        initSstvScope();
 
         eventSource = new EventSource('/sstv/stream');
 
@@ -649,6 +796,10 @@ const SSTV = (function() {
                 const data = JSON.parse(e.data);
                 if (data.type === 'sstv_progress') {
                     handleProgress(data);
+                } else if (data.type === 'sstv_scope') {
+                    sstvScopeTargetRms = data.rms;
+                    sstvScopeTargetPeak = data.peak;
+                    if (data.tone !== undefined) sstvScopeTone = data.tone;
                 }
             } catch (err) {
                 console.error('Failed to parse SSE message:', err);
@@ -671,6 +822,9 @@ const SSTV = (function() {
             eventSource.close();
             eventSource = null;
         }
+        stopSstvScope();
+        const scopePanel = document.getElementById('sstvScopePanel');
+        if (scopePanel) scopePanel.style.display = 'none';
     }
 
     /**
@@ -691,6 +845,7 @@ const SSTV = (function() {
             renderGallery();
             showNotification('SSTV', 'New image decoded!');
             updateStatusUI('listening', 'Listening...');
+            sstvScopeMsgBurst = 1.0;
             // Clear decode progress so signal monitor can take over
             const liveContent = document.getElementById('sstvLiveContent');
             if (liveContent) liveContent.innerHTML = '';
